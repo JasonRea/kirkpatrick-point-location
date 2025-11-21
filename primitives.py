@@ -58,17 +58,6 @@ def link_vertices_circular(vertex_list: List[Vertex]):
     
     vertices = vertex_list[0]  # Assign to global vertices
 
-def create_polygon(points: List[tuple[int, int]]):
-    global vertices
-    
-    vertex_list = [
-        Vertex(i, Point(x, y)) 
-        for i, (x, y) in enumerate(points)
-    ]
-    
-    vertices = link_vertices_circular(vertex_list)
-    return vertices
-
 def Area2(a: Point, b: Point, c: Point):
     return (b[X] - a[X]) * (c[Y] - a[Y]) - (c[X] - a[X]) * (b[Y] - a[Y])
 
@@ -91,7 +80,7 @@ def Left(a: Point, b: Point, c: Point):
     return Area2(a, b, c) > 0
 
 def LeftOn(a: Point, b: Point, c: Point):
-    return Area2(a, b, c) > 0
+    return Area2(a, b, c) >= 0
 
 def Collinear(a: Point, b: Point, c: Point):
     return Area2(a, b, c) == 0
@@ -154,17 +143,17 @@ def DiagonalIE(a: Vertex, b:Vertex):
 
 def InCone(a: Vertex, b: Vertex):
     a1 = a.next
-    a2 = a.prev
+    a0 = a.prev
 
-    if(LeftOn(a.v, a1.v, a2.v)):
+    if(LeftOn(a.v, a1.v, a0.v)):
         return (
-            Left(a.v, b.v, a1.v) and
+            Left(a.v, b.v, a0.v) and
             Left(b.v, a.v, a1.v)
         )
     
     return not (
         LeftOn(a.v, b.v, a1.v) and
-        LeftOn(b.v, a.v, a1.v)
+        LeftOn(b.v, a.v, a0.v)
     )
 
 def Diagonal(a: Vertex, b: Vertex):
@@ -182,41 +171,6 @@ def EarInit():
 
         if(v1 == vertices):
             break
-
-# Triangulation by ear-clipping
-def Triangulate():
-    global vertices
-    n = vertices.prev.vnum + 1
-
-    EarInit()
-
-    while (n > 3):
-        v2 = vertices
-        
-        while True:
-            if (v2.ear):
-                v3 = v2.next
-                v4 = v3.next
-                v1 = v2.prev
-                v0 = v1.prev
-                
-                print(f"({v1, v3}) is a diagonal, {v2} is an ear")
-
-                # Update earity of diagonal
-                v1.ear = Diagonal(v0 ,v3)
-                v3.ear = Diagonal(v1, v4)
-
-                # Cut off ear v2
-                v1.next = v3
-                v3.prev = v1
-                vertices = v3 # Incase head was v2
-                n = n - 1
-                break
-
-            v2 = v2.next
-
-            if(v2 == vertices):
-                break
 
 if __name__ == '__main__':
     # Create a simple triangle
