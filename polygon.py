@@ -4,7 +4,7 @@ import primitives as prim
 X = 0
 Y = 1
 DIM = 2
-PMAX = 10000
+PMAX = 1000
 
 class Polygon:
     def __init__(self, points: List[prim.Point] = None):
