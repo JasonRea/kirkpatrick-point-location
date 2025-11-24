@@ -15,7 +15,7 @@ DIM = 2
 
 # Point type: array of 2 integers [x, y]
 class Point:
-    def __init__(self, x: int = 0, y: int = 0):
+    def __init__(self, x: int | float = 0, y: int | float = 0):
         self.coords = [x, y]
     
     def __getitem__(self, index):
