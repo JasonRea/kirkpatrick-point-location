@@ -5,6 +5,45 @@ X = 0
 Y = 1
 DIM = 2
 
+def SegSegInt(a: prim.Point, b: prim.Point, c: prim.Point, d: prim.Point, p: prim.Point):
+    code = '?'
+    denom = a[X] * (d[Y] - c[Y]) + \
+            b[X] * (c[Y] - d[Y]) + \
+            d[X] * (b[Y] - a[Y]) + \
+            c[X] * (a[Y] - b[Y])
+    
+    if (denom == 0):
+        return ParallelInt(a, b, c, d, p)
+    
+    num = a[X] * (d[Y] - c[Y]) + \
+          c[X] * (a[Y] - d[Y]) + \
+          d[X] * (c[Y] - a[Y])
+    if (num == 0 or num == denom):
+        code = 'v'
+    s = num / denom
+
+    num = -(
+        a[X] * (c[Y] - b[Y]) + \
+        b[X] * (a[Y] - c[Y]) + \
+        c[X] * (b[Y] - a[Y])
+    )
+    if (num == 0 or num == denom):
+        code = 'v'
+    t = num / denom
+
+    if ((0 < s < 1) and (0 < t < 1)):
+        code = '1'
+    elif (0 > s or s > 1 or 0 > t or t > 1):
+        code = '0'
+
+    p[X] = a[X] + s * (b[X] - a[X])
+    p[Y] = a[Y] + s * (b[Y] - a[Y])
+
+    return code
+
+def ParallelInt():
+    ...
+
 def InPoly1(q: prim.Point, P: poly.Polygon, n: int):
     Rcross = 0
     Lcross = 0
