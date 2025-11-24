@@ -6,13 +6,24 @@ Y = 1
 DIM = 2
 
 def SegSegInt(a: prim.Point, b: prim.Point, c: prim.Point, d: prim.Point, p: prim.Point):
+    '''
+    given line segments ab, cd, and intersection point p
+    s and t are parameters of parametric equations
+    num and denom are the numerator and denominator of equations
+    returns: 
+        'e' -> segments collinearly overlap sharing a point, 'e' stands for edge
+        'v' -> an endpoint of one segment is on the other segment but e doesn't hold, 'v' stands for vertex
+        '1' -> segments properly intersect, '1' stands for True
+        '0' -> segments do not intersect, '0' stands for False
+    Section 7.2 of O'Rourke contains further details
+    '''
     code = '?'
     denom = a[X] * (d[Y] - c[Y]) + \
             b[X] * (c[Y] - d[Y]) + \
             d[X] * (b[Y] - a[Y]) + \
             c[X] * (a[Y] - b[Y])
     
-    if (denom == 0):
+    if (denom == 0): # Segments are parallel
         return ParallelInt(a, b, c, d, p)
     
     num = a[X] * (d[Y] - c[Y]) + \
@@ -41,8 +52,34 @@ def SegSegInt(a: prim.Point, b: prim.Point, c: prim.Point, d: prim.Point, p: pri
 
     return code
 
-def ParallelInt():
-    ...
+def ParallelInt(a: prim.Point, b: prim.Point, c: prim.Point, d: prim.Point, p: prim.Point):
+    if not prim.Collinear(a, b, c):
+        return 0
+    if prim.Between(a, b, c):
+        Assigndi(p, c)
+        return 'e'
+    if prim.Between(a, b, d):
+        Assigndi(p, d)
+        return 'e'
+    if prim.Between(c, d, a):
+        Assigndi(p, a)
+        return 'e'
+    if prim.Between(c, d, b):
+        Assigndi(p, b)
+        return 'e'
+    return '0'
+
+def Assigndi(p: prim.Point, a: prim.Point):
+    for i in range(DIM):
+        p[i] = a[i]
+
+def Dot(a: prim.Point, b: prim.Point):
+    sum = 0
+    
+    for i in range(DIM):
+        sum += a[i] * b[i]
+
+    return sum
 
 def InPoly1(q: prim.Point, P: poly.Polygon, n: int):
     Rcross = 0
