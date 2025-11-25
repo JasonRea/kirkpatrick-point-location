@@ -56,61 +56,111 @@ def ParallelInt(a: prim.Point, b: prim.Point, c: prim.Point, d: prim.Point, p: p
     if not prim.Collinear(a, b, c):
         return 0
     if prim.Between(a, b, c):
-        Assigndi(p, c)
+        prim.Assigndi(p, c)
         return 'e'
     if prim.Between(a, b, d):
-        Assigndi(p, d)
+        prim.Assigndi(p, d)
         return 'e'
     if prim.Between(c, d, a):
-        Assigndi(p, a)
+        prim.Assigndi(p, a)
         return 'e'
     if prim.Between(c, d, b):
-        Assigndi(p, b)
+        prim.Assigndi(p, b)
         return 'e'
     return '0'
 
-def Assigndi(p: prim.Point, a: prim.Point):
-    for i in range(DIM):
-        p[i] = a[i]
+def inTri2D(tp: list, q: prim.Point):
+    """
+    Test if point q is inside triangle tp[0], tp[1], tp[2].
+    Returns:
+        'v' -> q is a vertex of triangle
+        'e' -> q is on an edge of triangle  
+        'f' -> q is in the interior (face) of triangle
+        'o' -> q is outside triangle
+    """
+    area0 = prim.AreaSign(q, tp[0], tp[1])
+    area1 = prim.AreaSign(q, tp[1], tp[2])
+    area2 = prim.AreaSign(q, tp[2], tp[0])
 
-def Dot(a: prim.Point, b: prim.Point):
-    sum = 0
+    if (
+        (area0 == 0 and area1 > 0 and area2 > 0) or
+        (area1 == 0 and area0 > 0 and area2 > 0) or
+        (area2 == 0 and area0 > 0 and area1 > 0)
+        ):
+        return 'e'
     
-    for i in range(DIM):
-        sum += a[i] * b[i]
-
-    return sum
+    if (
+        (area0 == 0 and area1 < 0 and area2 > 0) or
+        (area1 == 0 and area0 < 0 and area2 > 0) or
+        (area2 == 0 and area0 < 0 and area1 > 0)
+    ):
+        return 'e'
+    
+    if (
+        (area0 > 0 and area1 > 0 and area2 > 0) or
+        (area0 < 0 and area1 < 0 and area2 < 0)
+    ):
+        return 'f'
+    
+    if (
+        (area0 == 0 and area1 == 0 and area2 == 0)
+    ):
+        raise RuntimeError('Error in InTri2D')
+    
+    if (
+        (area0 == 0 and area1 == 0) or
+        (area0 == 0 and area2 == 0) or
+        (area1 == 0 and area2 == 0)
+    ):
+        return 'v'
 
 def InPoly1(q: prim.Point, P: poly.Polygon, n: int):
-    Rcross = 0
-    Lcross = 0
+    """
+    Test if point q is inside polygon P using ray casting algorithm.
+    Does NOT modify the original polygon points.
+    Returns:
+        'v' -> q is a vertex of P
+        'e' -> q is on an edge of P (or rays have same parity)
+        'i' -> q is inside P
+        'o' -> q is outside P
+    """
+    Rcross = 0  # Crossings to the right
+    Lcross = 0  # Crossings to the left
 
-    # Shift q to the origin
+    # Create shifted copies of polygon points (do not modify original)
+    shifted_points = []
     for i in range(n):
-        for d in range(DIM):
-            P.points[i][d] = P.points[i][d] - q[d]
+        shifted_point = prim.Point(
+            P.points[i][X] - q[X],
+            P.points[i][Y] - q[Y]
+        )
+        shifted_points.append(shifted_point)
 
     for i in range(n):
-        if (P.points[i][X] == 0 and P.points[i][Y] == 0):
-            return 'v'
+        if (shifted_points[i][X] == 0 and shifted_points[i][Y] == 0):
+            return 'v'  # q is a vertex
         
         i1 = (i + n - 1) % n
 
-        Rstrad = (P.points[i][Y] > 0) != (P.points[i1][Y] > 0)
-        Lstrad = (P.points[i][Y] < 0) != (P.points[i1][Y] < 0)
+        Rstrad = (shifted_points[i][Y] > 0) != (shifted_points[i1][Y] > 0)
+        Lstrad = (shifted_points[i][Y] < 0) != (shifted_points[i1][Y] < 0)
 
         if(Rstrad or Lstrad):
-            x = (P[i][X] * P[i1][Y] - P[i1][X] * P[i][Y]) / (P[i1][Y] - P[i][Y])
+            # Compute x-coordinate of edge/ray intersection
+            x = (shifted_points[i][X] * shifted_points[i1][Y] - shifted_points[i1][X] * shifted_points[i][Y]) / (shifted_points[i1][Y] - shifted_points[i][Y])
             if (Rstrad and x > 0):
                 Rcross += 1
             if (Lstrad and x < 0):
                 Lcross += 1
 
+    # Different parity means on boundary
     if ((Rcross % 2) != (Lcross % 2)):
         return 'e'
     
+    # Odd number of crossings means inside
     if((Rcross % 2) == 1):
         return 'i'
     
+    # Even crossings means outside
     else:
         return 'o'
