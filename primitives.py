@@ -172,6 +172,26 @@ def EarInit():
         if(v1 == vertices):
             break
 
+def Assigndi(p: Point, a: Point):
+    for i in range(DIM):
+        p[i] = a[i]
+
+def Dot(a: Point, b: Point):
+    sum = 0
+    
+    for i in range(DIM):
+        sum += a[i] * b[i]
+
+    return sum
+
+def AreaSign(a: Point, b: Point, c: Point):
+    area2 = (b[0] - a[0]) * (c[1] - a[1]) - \
+            (c[0] - a[0]) * (b[1] - a[1])
+    
+    if (area2 > 0.5): return 1
+    elif (area2 < -0.5): return -1
+    else: return 0
+
 if __name__ == '__main__':
     # Create a simple triangle
     v1 = Vertex(0, Point(0, 0))
