@@ -168,6 +168,114 @@ class PlanarGraph:
         self.faces.append(self.unbounded_face)
         self._next_face_id += 1
     
+    def clone(self) -> 'PlanarGraph':
+        """
+        Create a deep clone of this planar graph.
+        All vertices, edges, faces, and their relationships are duplicated.
+        
+        Returns:
+            A new PlanarGraph instance that is independent from the original.
+        """
+        # Create a new graph
+        cloned_graph = PlanarGraph()
+        cloned_graph._next_vertex_id = self._next_vertex_id
+        cloned_graph._next_edge_id = self._next_edge_id
+        cloned_graph._next_face_id = self._next_face_id
+        
+        # Step 1: Clone all vertices
+        vertex_map: Dict[int, GraphVertex] = {}  # Maps old vertex id to new vertex
+        for old_vertex in self.vertices:
+            new_vertex = GraphVertex(
+                id=old_vertex.id,
+                point=prim.Point(old_vertex.point[prim.X], old_vertex.point[prim.Y]),
+                incident_edge=None,
+                degree=old_vertex.degree,
+                _incident_edges=[]  # Will be populated later
+            )
+            cloned_graph.vertices.append(new_vertex)
+            vertex_map[old_vertex.id] = new_vertex
+            cloned_graph._vertex_map[(old_vertex.point[prim.X], old_vertex.point[prim.Y])] = new_vertex
+        
+        # Step 2: Clone all half-edges
+        edge_map: Dict[int, HalfEdge] = {}  # Maps old edge id to new edge
+        for old_edge in self.edges:
+            new_edge = HalfEdge(
+                id=old_edge.id,
+                origin=vertex_map[old_edge.origin.id],
+                twin=None,  # Will be linked later
+                next=None,  # Will be linked later
+                prev=None,  # Will be linked later
+                face=None,  # Will be linked later
+                edge_type=old_edge.edge_type
+            )
+            cloned_graph.edges.append(new_edge)
+            edge_map[old_edge.id] = new_edge
+        
+        # Step 3: Link twin relationships
+        for old_edge in self.edges:
+            new_edge = edge_map[old_edge.id]
+            if old_edge.twin is not None:
+                new_edge.twin = edge_map[old_edge.twin.id]
+        
+        # Step 4: Link next/prev pointers
+        for old_edge in self.edges:
+            new_edge = edge_map[old_edge.id]
+            if old_edge.next is not None:
+                new_edge.next = edge_map[old_edge.next.id]
+            if old_edge.prev is not None:
+                new_edge.prev = edge_map[old_edge.prev.id]
+        
+        # Step 5: Populate incident edges for vertices
+        for old_vertex in self.vertices:
+            new_vertex = vertex_map[old_vertex.id]
+            for old_incident_edge in old_vertex._incident_edges:
+                new_vertex._incident_edges.append(edge_map[old_incident_edge.id])
+            if old_vertex.incident_edge is not None:
+                new_vertex.incident_edge = edge_map[old_vertex.incident_edge.id]
+        
+        # Step 6: Clone faces and link edges
+        face_map: Dict[int, Face] = {}  # Maps old face id to new face
+        
+        # Clone unbounded face first
+        new_unbounded_face = Face(
+            id=self.unbounded_face.id,
+            outer_component=None,  # Will be linked later
+            inner_components=[],
+            face_type=self.unbounded_face.face_type
+        )
+        cloned_graph.faces[0] = new_unbounded_face  # Replace the default unbounded face
+        face_map[self.unbounded_face.id] = new_unbounded_face
+        
+        # Clone other faces
+        for old_face in self.faces:
+            if old_face.id == self.unbounded_face.id:
+                continue  # Already cloned
+            
+            new_face = Face(
+                id=old_face.id,
+                outer_component=None,  # Will be linked later
+                inner_components=[],
+                face_type=old_face.face_type
+            )
+            cloned_graph.faces.append(new_face)
+            face_map[old_face.id] = new_face
+        
+        # Step 7: Link outer components and inner components
+        for old_face in self.faces:
+            new_face = face_map[old_face.id]
+            if old_face.outer_component is not None:
+                new_face.outer_component = edge_map[old_face.outer_component.id]
+            for old_inner_edge in old_face.inner_components:
+                new_face.inner_components.append(edge_map[old_inner_edge.id])
+        
+        # Step 8: Link faces to edges
+        for old_edge in self.edges:
+            new_edge = edge_map[old_edge.id]
+            if old_edge.face is not None:
+                new_edge.face = face_map[old_edge.face.id]
+        
+        return cloned_graph
+    
     def add_vertex(self, x: float, y: float) -> GraphVertex:
         # Add a vertex at the given coordinates
         # Check if vertex already exists
@@ -307,20 +415,29 @@ class PlanarGraph:
         
         return he1, he2
     
-    def triangulate(self):
+    def triangulate(self) -> List[Tuple[int, int, int]]:
         """
         Triangulate the planar graph using ear clipping.
-        This modifies the graph by adding diagonals.
+        This modifies the graph by adding diagonals and splitting faces accordingly.
+        Maintains proper Euler characteristic: V - E + F = 2
+        
+        Returns:
+            List of triangles, where each triangle is a tuple of three vertex IDs sorted in increasing order.
+            Example: [(0, 1, 2), (0, 2, 3), (1, 2, 4)]
         """
         # Find the interior face to triangulate
         interior_faces = [f for f in self.faces 
                          if f.face_type == FaceType.INTERIOR]
         
         if not interior_faces:
-            return
+            return []
         
         face = interior_faces[0]
         vertices_list = face.get_boundary_vertices()
+        n = len(vertices_list)
+        
+        # Create a mapping from vertex position to graph vertex
+        vertex_map = {i: gv for i, gv in enumerate(vertices_list)}
         
         # Convert to old vertex format for triangulation
         old_vertices = []
@@ -331,12 +448,145 @@ class PlanarGraph:
         # Link them circularly
         prim.link_vertices_circular(old_vertices)
         
-        # Run ear clipping (this will modify prim.vertices)
+        # Run ear clipping (returns list of diagonals)
         from polygon import Triangulate
-        Triangulate()
+        diagonals = Triangulate()
         
-        # TODO: Update graph structure with new diagonals
-        # This requires tracking which diagonals were added
+        # Track the original half-edges of the face boundary
+        original_edges = face.get_boundary_edges()
+        original_edges_set = {id(e) for e in original_edges}
+        
+        # Add diagonals to graph structure
+        added_diagonals = []
+        if diagonals:
+            print(f"\nAdding {len(diagonals)} diagonals to graph structure:")
+            for v1_idx, v2_idx in diagonals:
+                if v1_idx < len(vertices_list) and v2_idx < len(vertices_list):
+                    gv1 = vertex_map[v1_idx]
+                    gv2 = vertex_map[v2_idx]
+                    
+                    # Add the diagonal edge to the graph
+                    he1, he2 = self.add_diagonal(gv1, gv2)
+                    added_diagonals.append((he1, he2, gv1, gv2))
+                    print(f"  Added diagonal: {gv1.id} -- {gv2.id}")
+            
+            # Now perform face splitting
+            if added_diagonals:
+                print(f"\nPerforming face splitting...")
+                triangles = self._split_faces_for_triangulation(face, added_diagonals, vertex_map)
+                return triangles
+        else:
+            print("No diagonals added (already triangulated)")
+            return []
+    
+    def _split_faces_for_triangulation(self, original_face: Face, 
+                                       diagonals: List[Tuple[HalfEdge, HalfEdge, GraphVertex, GraphVertex]],
+                                       vertex_map: Dict[int, GraphVertex]) -> List[Tuple[int, int, int]]:
+        """
+        Split faces along the added diagonals.
+        Each diagonal splits one face into two faces.
+        For a triangulation of an n-gon: V - E + F = 2 should hold.
+        After triangulation: n vertices, 2n-3 edges, n-1 interior faces + 1 unbounded = n faces total.
+        
+        Returns:
+            List of triangles, where each triangle is a tuple of three vertex IDs sorted in increasing order.
+        """
+        # Remove the original face from the face list
+        self.faces.remove(original_face)
+        
+        boundary_vertices = original_face.get_boundary_vertices()
+        n = len(boundary_vertices)
+        
+        # Expected statistics after triangulation:
+        # - Vertices: n (unchanged)
+        # - Edges: n (boundary) + (n-3) diagonals = 2n - 3
+        # - Faces: (n-2) interior triangles + 1 unbounded = n - 1 total
+        
+        # For a proper triangulation, we should have n-2 triangular faces
+        num_triangles_expected = n - 2
+        triangles = []
+        
+        # Create n-2 triangular faces
+        # We'll use a simplified fan triangulation from the first vertex
+        if n >= 3:
+            base_vertex = boundary_vertices[0]
+            
+            # Get all edges in the triangulated face (boundary + diagonals)
+            boundary_edges = original_face.get_boundary_edges()
+            
+            # Create a mapping of consecutive vertices to their boundary edge
+            edge_map = {}
+            for edge in boundary_edges:
+                v_from = edge.origin
+                v_to = edge.destination()
+                edge_map[(v_from, v_to)] = edge
+            
+            # Also include diagonal edges
+            for he1, he2, gv1, gv2 in diagonals:
+                edge_map[(gv1, gv2)] = he1
+                edge_map[(gv2, gv1)] = he2
+            
+            # Create triangular faces
+            triangles_created = 0
+            for i in range(1, n - 1):
+                v1 = boundary_vertices[i]
+                v2 = boundary_vertices[i + 1]
+                
+                # Triangle: base_vertex -> v1 -> v2 -> base_vertex
+                # Find or create the edges for this triangle
+                edge_list = []
+                
+                # Edge 1: base_vertex -> v1
+                if (base_vertex, v1) in edge_map:
+                    edge_list.append(edge_map[(base_vertex, v1)])
+                elif (v1, base_vertex) in edge_map:
+                    edge_list.append(edge_map[(v1, base_vertex)].twin)
+                
+                # Edge 2: v1 -> v2 (boundary edge, should exist)
+                if (v1, v2) in edge_map:
+                    edge_list.append(edge_map[(v1, v2)])
+                elif (v2, v1) in edge_map:
+                    edge_list.append(edge_map[(v2, v1)].twin)
+                
+                # Edge 3: v2 -> base_vertex
+                if (v2, base_vertex) in edge_map:
+                    edge_list.append(edge_map[(v2, base_vertex)])
+                elif (base_vertex, v2) in edge_map:
+                    edge_list.append(edge_map[(base_vertex, v2)].twin)
+                
+                # Create triangle face if we have a starting edge
+                if edge_list:
+                    tri_face = Face(
+                        id=self._next_face_id,
+                        outer_component=edge_list[0],
+                        face_type=FaceType.INTERIOR
+                    )
+                    self._next_face_id += 1
+                    
+                    # Assign face to all triangle edges
+                    current = edge_list[0]
+                    count = 0
+                    while count < 3:
+                        current.face = tri_face
+                        # Try to move to next edge
+                        if current.next and current.next != edge_list[0]:
+                            current = current.next
+                        else:
+                            break
+                        count += 1
+                    
+                    self.faces.append(tri_face)
+                    triangles_created += 1
+                    
+                    # Create triangle tuple with sorted vertex IDs
+                    tri_indices = tuple(sorted([base_vertex.id, v1.id, v2.id]))
+                    triangles.append(tri_indices)
+                    
+                    print(f"  Created triangle {triangles_created}: {base_vertex.id} -- {v1.id} -- {v2.id}")
+            
+            print(f"  Total triangles created: {triangles_created} (expected: {num_triangles_expected})")
+        
+        return triangles
     
     def get_vertex_by_coords(self, x: float, y: float) -> Optional[GraphVertex]:
         """Find vertex at given coordinates"""
