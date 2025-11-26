@@ -184,3 +184,19 @@ def ConstructIndependentSet(G: pg.PlanarGraph):
 
     return I
         
+def BuildDAG(G: pg.PlanarGraph):
+    # Find bounding triangle
+    min_x, min_y = min(vertex.point[X] for vertex in G.verticies), min(vertex.point[Y] for vertex in G.verticies)
+    max_x, max_y = max(vertex.point[X] for vertex in G.verticies), max(vertex.point[Y] for vertex in G.verticies)
+
+    G.add_vertex(min_x - 1, min_y - 1)
+    G.add_vertex(max_x - 1, min_y - 1)
+    G.add_vertex((min_x + max_x)/2, max_y + 1)
+
+    # Triangulate G
+    num_triangles = -1 # initialize num_triangles
+    while num_triangles != 1:
+        triangles = G.triangulate()
+        num_triangles = len(triangles)
+        # add triangles to dag
+        independent_set = ConstructIndependentSet(G)

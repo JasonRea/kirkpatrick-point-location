@@ -157,3 +157,71 @@ except Exception as e:
     print(f"ERROR: {type(e).__name__}: {e}")
     import traceback
     traceback.print_exc()
+
+# Test 6: Planar Graph Triangulation
+print("\n=== Test 6: Planar Graph Triangulation ===")
+triangle_graph = pg.PlanarGraph()
+triangle_graph.from_polygon([
+    (0, 0),
+    (5, 0),
+    (2.5, 4)
+])
+
+print(f"Triangle graph (already triangulated):")
+print(f"  Structure: {triangle_graph}")
+print(f"  Valid: {triangle_graph.validate()}")
+print(f"  Euler: {triangle_graph.euler_characteristic()}")
+
+print(f"\n--- Testing square triangulation ---")
+square_tri_graph = pg.PlanarGraph()
+square_tri_graph.from_polygon([
+    (0, 0),
+    (4, 0),
+    (4, 4),
+    (0, 4)
+])
+
+print(f"Before triangulation:")
+print(f"  Structure: {square_tri_graph}")
+print(f"  Vertices: {len(square_tri_graph.vertices)}")
+print(f"  Edges: {len(square_tri_graph.edges) // 2}")
+for v in square_tri_graph.vertices:
+    print(f"    {v} - degree={v.degree}")
+
+print(f"\nTriangulating square graph...")
+triangles = square_tri_graph.triangulate()
+print(f"Triangles returned: {triangles}")
+
+print(f"\nAfter triangulation:")
+print(f"  Structure: {square_tri_graph}")
+print(f"  Vertices: {len(square_tri_graph.vertices)}")
+print(f"  Edges: {len(square_tri_graph.edges) // 2}")
+for v in square_tri_graph.vertices:
+    neighbors = v.get_neighbors()
+    print(f"    {v} - degree={v.degree}, neighbors=[{', '.join([f'V{n.id}' for n in neighbors])}]")
+print(f"  Valid: {square_tri_graph.validate()}")
+print(f"  Euler: {square_tri_graph.euler_characteristic()}")
+
+print(f"\n--- Testing pentagon triangulation ---")
+pent_graph = pg.PlanarGraph()
+pent_graph.from_polygon([
+    (0, 0),
+    (4, 0),
+    (5, 3),
+    (2, 5),
+    (-1, 2)
+])
+
+print(f"Before pentagon triangulation:")
+print(f"  Structure: {pent_graph}")
+print(f"  Edges: {len(pent_graph.edges) // 2}")
+
+print(f"\nTriangulating pentagon...")
+pent_triangles = pent_graph.triangulate()
+print(f"Triangles returned: {pent_triangles}")
+
+print(f"\nAfter pentagon triangulation:")
+print(f"  Structure: {pent_graph}")
+print(f"  Edges: {len(pent_graph.edges) // 2}")
+print(f"  Valid: {pent_graph.validate()}")
+print(f"  Euler: {pent_graph.euler_characteristic()}")
