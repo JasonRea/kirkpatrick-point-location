@@ -28,7 +28,12 @@ class Polygon:
 
 # Triangulation by ear-clipping
 def Triangulate():
+    """
+    Triangulate a polygon using ear clipping algorithm.
+    Returns a list of diagonals (tuples of vertex indices) that were added.
+    """
     n = prim.vertices.prev.vnum + 1
+    diagonals = []  # Track diagonals added
 
     prim.EarInit()
 
@@ -42,7 +47,9 @@ def Triangulate():
                 v1 = v2.prev
                 v0 = v1.prev
                 
-                print(f"({v1.vnum, v3.vnum}) is a diagonal, vertex {v2.vnum} is an ear")
+                diagonal = (v1.vnum, v3.vnum)
+                diagonals.append(diagonal)
+                print(f"{diagonal} is a diagonal, vertex {v2.vnum} is an ear")
 
                 # Update earity of diagonal
                 v1.ear = prim.Diagonal(v0 ,v3)
@@ -59,7 +66,9 @@ def Triangulate():
 
             if(v2 == prim.vertices):
                 print("No ear found")
-                return
+                return diagonals
+    
+    return diagonals
 
 
 def create_polygon(points: List[tuple[int, int]]):
