@@ -56,6 +56,7 @@ class GraphVertex:
     point: prim.Point
     incident_edge: Optional[HalfEdge] = None  
     degree: int = 0
+    _incident_edges: List[HalfEdge] = field(default_factory=list)  # All edges from this vertex
     
     def __repr__(self):
         return f"V{self.id}({self.point.coords[0]}, {self.point.coords[1]})"
@@ -69,29 +70,23 @@ class GraphVertex:
         return self.id == other.id
     
     def get_incident_edges(self) -> List[HalfEdge]:
-        """Get all half-edges originating from this vertex (CCW order)"""
-        if self.incident_edge is None:
-            return []
-        
-        edges = []
-        current = self.incident_edge
-        
-        while True:
-            edges.append(current)
-            # Move to next outgoing edge around vertex
-            if current.twin and current.twin.next:
-                current = current.twin.next
-            else:
-                break
-            
-            if current == self.incident_edge:
-                break
-        
-        return edges
+        """Get all half-edges originating from this vertex"""
+        # Return the comprehensive list of incident edges
+        return list(self._incident_edges)
     
     def get_neighbors(self) -> List['GraphVertex']:
-        edges = self.get_incident_edges()
-        return [edge.destination() for edge in edges]
+        """Get all neighboring vertices (bidirectional)"""
+        neighbors = []
+        for edge in self.get_incident_edges():
+            neighbors.append(edge.destination())
+        return neighbors
+    
+    def _add_incident_edge(self, edge: HalfEdge):
+        """Internal method to register an incident edge"""
+        if edge not in self._incident_edges:
+            self._incident_edges.append(edge)
+            if self.incident_edge is None:
+                self.incident_edge = edge
 
 
 @dataclass
@@ -224,11 +219,9 @@ class PlanarGraph:
         he1.twin = he2
         he2.twin = he1
         
-        # Update vertex incident edges if not set
-        if v1.incident_edge is None:
-            v1.incident_edge = he1
-        if v2.incident_edge is None:
-            v2.incident_edge = he2
+        # Register edges with BOTH vertices (bidirectional)
+        v1._add_incident_edge(he1)
+        v2._add_incident_edge(he2)
         
         # Update vertex degrees
         v1.degree += 1
@@ -348,6 +341,17 @@ class PlanarGraph:
     def get_vertex_by_coords(self, x: float, y: float) -> Optional[GraphVertex]:
         """Find vertex at given coordinates"""
         return self._vertex_map.get((x, y))
+    
+    def get_incident_edges_for_vertex(self, vertex: GraphVertex) -> List[HalfEdge]:
+        """
+        Get all half-edges originating from a vertex.
+        This directly searches the edge list (works even for unlinked edges).
+        """
+        incident_edges = []
+        for edge in self.edges:
+            if edge.origin == vertex:
+                incident_edges.append(edge)
+        return incident_edges
     
     def find_face_containing_point(self, x: float, y: float) -> Optional[Face]:
         """
