@@ -1,5 +1,6 @@
 import primitives as prim
 import polygon as poly
+import planar_graph as pg
 
 X = 0
 Y = 1
@@ -164,3 +165,22 @@ def InPoly1(q: prim.Point, P: poly.Polygon, n: int):
     # Even crossings means outside
     else:
         return 'o'
+    
+def ConstructIndependentSet(G: pg.PlanarGraph):
+    I = set()
+    marked_verteces = set()
+    
+    for vertex in G.vertices:
+        if vertex.degree >= 9:
+            marked_verteces.add(vertex)
+
+    while len(marked_verteces) != len(G.vertices):
+        for vertex in G.vertices:
+            if vertex not in marked_verteces:
+                marked_verteces.add(vertex)
+                for edge in vertex.get_incident_edges():
+                    marked_verteces.add(edge.destination())
+                I.add(vertex)
+
+    return I
+        
