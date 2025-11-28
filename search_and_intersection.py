@@ -166,7 +166,15 @@ def InPoly1(q: prim.Point, P: poly.Polygon, n: int):
     else:
         return 'o'
     
-def ConstructIndependentSet(G: pg.PlanarGraph):
+
+class DAGNode():
+    def __init__(self, value: tuple):
+        self.value = value
+        self.children = []
+    def add_child(self, child):
+        self.children.append(child)
+
+def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
     I = set()
     marked_verteces = set()
     
@@ -183,7 +191,30 @@ def ConstructIndependentSet(G: pg.PlanarGraph):
                 I.add(vertex)
 
     return I
-        
+
+def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list:
+    hierarchy = []
+    P_i = P.clone()
+    
+    hierarchy.append(P_i)
+
+    # TODO complete nested hierarchy algorithm
+
+    while len(P_i.vertices) > 4:
+        I = ConstructIndependentSet(P_i)
+        P_iplusone = P_i.clone()
+
+        for vertex in I:
+            P_iplusone.remove_vertex(vertex)
+            # retriangulate hole
+            N_v = vertex.get_neighbors()
+
+        # link unchanged faces
+        hierarchy.append(P_iplusone)
+        P_i = P_iplusone
+
+    return hierarchy
+    
 def BuildDAG(G: pg.PlanarGraph):
     # Find bounding triangle
     min_x, min_y = min(vertex.point[X] for vertex in G.verticies), min(vertex.point[Y] for vertex in G.verticies)
@@ -193,10 +224,4 @@ def BuildDAG(G: pg.PlanarGraph):
     G.add_vertex(max_x - 1, min_y - 1)
     G.add_vertex((min_x + max_x)/2, max_y + 1)
 
-    # Triangulate G
-    num_triangles = -1 # initialize num_triangles
-    while num_triangles != 1:
-        triangles = G.triangulate()
-        num_triangles = len(triangles)
-        # add triangles to dag
-        independent_set = ConstructIndependentSet(G)
+    # TODO complete DAG algorithm
