@@ -1,14 +1,8 @@
-from typing import List, Optional
-from enum import Enum
+from typing import Optional
 
 # Constants
 X = 0
 Y = 1
-
-# Boolean enum
-class Bool(Enum):
-    FALSE = 0
-    TRUE = 1
 
 # Dimension constant
 DIM = 2
@@ -43,7 +37,7 @@ class Vertex:
 # Vertex list
 vertices: Optional[Vertex] = None
 
-def link_vertices_circular(vertex_list: List[Vertex]):
+def link_vertices_circular(vertex_list: list[Vertex]):
     global vertices
     
     if not vertex_list:

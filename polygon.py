@@ -1,4 +1,3 @@
-from typing import List
 import primitives as prim
 
 X = 0
@@ -7,7 +6,7 @@ DIM = 2
 PMAX = 1000
 
 class Polygon:
-    def __init__(self, points: List[prim.Point] = None):
+    def __init__(self, points: list[prim.Point] = None):
         if points is None:
             self.points = []
         else:
@@ -71,7 +70,7 @@ def Triangulate():
     return diagonals
 
 
-def create_polygon(points: List[tuple[int, int]]):
+def create_polygon(points: list[tuple[int, int]]):
     vertex_list = [
         prim.Vertex(i, prim.Point(x, y)) 
         for i, (x, y) in enumerate(points)
