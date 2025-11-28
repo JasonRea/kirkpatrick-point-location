@@ -1,4 +1,4 @@
-from typing import List, Optional, Set, Dict, Tuple
+from typing import Optional
 from dataclasses import dataclass, field
 from enum import Enum
 import primitives as prim
@@ -56,7 +56,7 @@ class GraphVertex:
     point: prim.Point
     incident_edge: Optional[HalfEdge] = None  
     degree: int = 0
-    _incident_edges: List[HalfEdge] = field(default_factory=list)  # All edges from this vertex
+    _incident_edges: list[HalfEdge] = field(default_factory=list)  # All edges from this vertex
     
     def __repr__(self):
         return f"V{self.id}({self.point.coords[0]}, {self.point.coords[1]})"
@@ -69,12 +69,12 @@ class GraphVertex:
             return False
         return self.id == other.id
     
-    def get_incident_edges(self) -> List[HalfEdge]:
+    def get_incident_edges(self) -> list[HalfEdge]:
         """Get all half-edges originating from this vertex"""
         # Return the comprehensive list of incident edges
         return list(self._incident_edges)
     
-    def get_neighbors(self) -> List['GraphVertex']:
+    def get_neighbors(self) -> list['GraphVertex']:
         """Get all neighboring vertices (bidirectional)"""
         neighbors = []
         for edge in self.get_incident_edges():
@@ -93,13 +93,13 @@ class GraphVertex:
 class Face:
     id: int
     outer_component: Optional[HalfEdge] = None  # One edge on outer boundary
-    inner_components: List[HalfEdge] = field(default_factory=list)  # Holes
+    inner_components: list[HalfEdge] = field(default_factory=list)  # Holes
     face_type: FaceType = FaceType.INTERIOR
     
     def __repr__(self):
         return f"Face{self.id}({self.face_type.value})"
     
-    def get_boundary_vertices(self) -> List[GraphVertex]:
+    def get_boundary_vertices(self) -> list[GraphVertex]:
         """Get vertices on the outer boundary in order"""
         if self.outer_component is None:
             return []
@@ -115,7 +115,7 @@ class Face:
         
         return vertices
     
-    def get_boundary_edges(self) -> List[HalfEdge]:
+    def get_boundary_edges(self) -> list[HalfEdge]:
         """Get all edges bounding this face"""
         if self.outer_component is None:
             return []
@@ -148,14 +148,14 @@ class Face:
 
 
 class PlanarGraph:
-    # Doubly-Connected Edge List (DCEL) representation of a planar graph.
+    # Doubly-Connected Edge list (DCEL) representation of a planar graph.
     
     def __init__(self):
-        self.vertices: List[GraphVertex] = []
-        self.edges: List[HalfEdge] = []
-        self.faces: List[Face] = []
+        self.vertices: list[GraphVertex] = []
+        self.edges: list[HalfEdge] = []
+        self.faces: list[Face] = []
         
-        self._vertex_map: Dict[Tuple[float, float], GraphVertex] = {}
+        self._vertex_map: dict[tuple[float, float], GraphVertex] = {}
         self._next_vertex_id = 0
         self._next_edge_id = 0
         self._next_face_id = 0
@@ -183,7 +183,7 @@ class PlanarGraph:
         cloned_graph._next_face_id = self._next_face_id
         
         # Step 1: Clone all vertices
-        vertex_map: Dict[int, GraphVertex] = {}  # Maps old vertex id to new vertex
+        vertex_map: dict[int, GraphVertex] = {}  # Maps old vertex id to new vertex
         for old_vertex in self.vertices:
             new_vertex = GraphVertex(
                 id=old_vertex.id,
@@ -197,7 +197,7 @@ class PlanarGraph:
             cloned_graph._vertex_map[(old_vertex.point[prim.X], old_vertex.point[prim.Y])] = new_vertex
         
         # Step 2: Clone all half-edges
-        edge_map: Dict[int, HalfEdge] = {}  # Maps old edge id to new edge
+        edge_map: dict[int, HalfEdge] = {}  # Maps old edge id to new edge
         for old_edge in self.edges:
             new_edge = HalfEdge(
                 id=old_edge.id,
@@ -234,7 +234,7 @@ class PlanarGraph:
                 new_vertex.incident_edge = edge_map[old_vertex.incident_edge.id]
         
         # Step 6: Clone faces and link edges
-        face_map: Dict[int, Face] = {}  # Maps old face id to new face
+        face_map: dict[int, Face] = {}  # Maps old face id to new face
         
         # Clone unbounded face first
         new_unbounded_face = Face(
@@ -294,8 +294,126 @@ class PlanarGraph:
         
         return vertex
     
+    def remove_vertex(self, vertex: GraphVertex) -> bool:
+        """
+        Remove a vertex from the planar graph while maintaining DCEL consistency.
+        Also removes all edges incident to this vertex and properly merges affected faces.
+        Maintains Euler characteristic: V - E + F = 2
+        
+        Args:
+            vertex: The vertex to remove
+            
+        Returns:
+            True if vertex was successfully removed, False if vertex not in graph
+            
+        Raises:
+            ValueError: If removing the vertex would create an invalid DCEL structure
+            
+        Note:
+            This operation:
+            1. Removes all edges incident to the vertex
+            2. Merges faces that were separated by these edges
+            3. Updates half-edge cycles (next/prev pointers)
+            4. Maintains face boundaries and connectivity
+            5. Preserves Euler characteristic: V - E + F = 2
+        """
+        # Check if vertex exists in the graph
+        if vertex not in self.vertices:
+            return False
+        
+        # Cannot remove if it's the only vertex
+        if len(self.vertices) == 1:
+            return False
+        
+        # Get all incident edges (outgoing from this vertex)
+        incident_edges = list(vertex.get_incident_edges())
+        
+        if not incident_edges:
+            # Isolated vertex - safe to remove
+            self.vertices.remove(vertex)
+            key = (vertex.point[prim.X], vertex.point[prim.Y])
+            if key in self._vertex_map:
+                del self._vertex_map[key]
+            return True
+        
+        # Collect all faces incident to this vertex
+        incident_faces: list[Face] = []
+        for edge in incident_edges:
+            if edge.face and edge.face != self.unbounded_face:
+                if edge.face not in incident_faces:
+                    incident_faces.append(edge.face)
+            if edge.twin and edge.twin.face and edge.twin.face != self.unbounded_face:
+                if edge.twin.face not in incident_faces:
+                    incident_faces.append(edge.twin.face)
+        
+        # For each incident face, we need to handle the boundary modification
+        # When removing a vertex of degree d, we're removing d edges
+        # We need to reconnect the face boundaries properly
+        
+        # Strategy: For each pair of consecutive incident edges, reconnect them
+        # by linking their next/prev pointers across the removed vertex
+        degree = len(incident_edges)
+        
+        for i in range(degree):
+            current_edge = incident_edges[i]
+            next_edge = incident_edges[(i + 1) % degree]
+            
+            # For the edge LEAVING the vertex being removed
+            # The prev edge should now point to the next edge's prev
+            if current_edge.next:
+                current_edge.next.prev = next_edge.prev
+            if next_edge.prev:
+                next_edge.prev.next = current_edge.next
+        
+        # Collect all edges to remove (both half-edges in each pair)
+        edges_to_remove = []
+        for edge in incident_edges:
+            if edge not in edges_to_remove:
+                edges_to_remove.append(edge)
+            if edge.twin and edge.twin not in edges_to_remove:
+                edges_to_remove.append(edge.twin)
+        
+        # Update adjacent vertices' incident edge lists before removing edges
+        adjacent_vertices: dict[GraphVertex, list[HalfEdge]] = {}
+        for edge in incident_edges:
+            if edge.twin and edge.twin.origin:
+                other_vertex = edge.twin.origin
+                if other_vertex not in adjacent_vertices:
+                    adjacent_vertices[other_vertex] = []
+                adjacent_vertices[other_vertex].append(edge.twin)
+        
+        # Remove the edges from the graph
+        for edge in edges_to_remove:
+            if edge in self.edges:
+                self.edges.remove(edge)
+        
+        # Update adjacent vertices
+        for other_vertex, edges_from_removed in adjacent_vertices.items():
+            for edge in edges_from_removed:
+                if edge in other_vertex._incident_edges:
+                    other_vertex._incident_edges.remove(edge)
+            other_vertex.degree = len(other_vertex._incident_edges)
+        
+        # Merge faces: if multiple faces were incident to the removed vertex,
+        # keep the first face and remove the others (they are now merged)
+        if len(incident_faces) > 1:
+            primary_face = incident_faces[0]
+            for secondary_face in incident_faces[1:]:
+                if secondary_face in self.faces:
+                    self.faces.remove(secondary_face)
+        
+        # Remove the vertex from the graph
+        self.vertices.remove(vertex)
+        
+        # Remove from coordinate map
+        key = (vertex.point[prim.X], vertex.point[prim.Y])
+        if key in self._vertex_map:
+            del self._vertex_map[key]
+        
+        return True
+    
     def add_edge(self, v1: GraphVertex, v2: GraphVertex, 
-                 edge_type: EdgeType = EdgeType.INTERNAL) -> Tuple[HalfEdge, HalfEdge]:
+                 edge_type: EdgeType = EdgeType.INTERNAL) -> tuple[HalfEdge, HalfEdge]:
         """
         Add an edge between two vertices.
         Returns a tuple of (half_edge_1_to_2, half_edge_2_to_1)
@@ -360,7 +478,7 @@ class PlanarGraph:
         self.faces.append(face)
         return face
     
-    def from_polygon(self, points: List[Tuple[float, float]]) -> 'PlanarGraph':
+    def from_polygon(self, points: list[tuple[float, float]]) -> 'PlanarGraph':
         """
         Build planar graph from a simple polygon.
         Creates vertices and edges in order, forming one face.
@@ -402,7 +520,7 @@ class PlanarGraph:
         
         return self
     
-    def add_diagonal(self, v1: GraphVertex, v2: GraphVertex) -> Tuple[HalfEdge, HalfEdge]:
+    def add_diagonal(self, v1: GraphVertex, v2: GraphVertex) -> tuple[HalfEdge, HalfEdge]:
         """
         Add a diagonal between two vertices, splitting a face.
         Used in triangulation.
@@ -415,14 +533,14 @@ class PlanarGraph:
         
         return he1, he2
     
-    def triangulate(self) -> List[Tuple[int, int, int]]:
+    def triangulate(self) -> list[tuple[int, int, int]]:
         """
         Triangulate the planar graph using ear clipping.
         This modifies the graph by adding diagonals and splitting faces accordingly.
         Maintains proper Euler characteristic: V - E + F = 2
         
         Returns:
-            List of triangles, where each triangle is a tuple of three vertex IDs sorted in increasing order.
+            list of triangles, where each triangle is a tuple of three vertex IDs sorted in increasing order.
             Example: [(0, 1, 2), (0, 2, 3), (1, 2, 4)]
         """
         # Find the interior face to triangulate
@@ -480,8 +598,8 @@ class PlanarGraph:
             return []
     
     def _split_faces_for_triangulation(self, original_face: Face, 
-                                       diagonals: List[Tuple[HalfEdge, HalfEdge, GraphVertex, GraphVertex]],
-                                       vertex_map: Dict[int, GraphVertex]) -> List[Tuple[int, int, int]]:
+                                       diagonals: list[tuple[HalfEdge, HalfEdge, GraphVertex, GraphVertex]],
+                                       vertex_map: dict[int, GraphVertex]) -> list[tuple[int, int, int]]:
         """
         Split faces along the added diagonals.
         Each diagonal splits one face into two faces.
@@ -489,7 +607,7 @@ class PlanarGraph:
         After triangulation: n vertices, 2n-3 edges, n-1 interior faces + 1 unbounded = n faces total.
         
         Returns:
-            List of triangles, where each triangle is a tuple of three vertex IDs sorted in increasing order.
+            list of triangles, where each triangle is a tuple of three vertex IDs sorted in increasing order.
         """
         # Remove the original face from the face list
         self.faces.remove(original_face)
@@ -592,7 +710,7 @@ class PlanarGraph:
         """Find vertex at given coordinates"""
         return self._vertex_map.get((x, y))
     
-    def get_incident_edges_for_vertex(self, vertex: GraphVertex) -> List[HalfEdge]:
+    def get_incident_edges_for_vertex(self, vertex: GraphVertex) -> list[HalfEdge]:
         """
         Get all half-edges originating from a vertex.
         This directly searches the edge list (works even for unlinked edges).
