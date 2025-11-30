@@ -177,7 +177,7 @@ class DAGNode():
 def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
     I = set()
     marked_verteces = set()
-    
+
     for vertex in G.vertices:
         if vertex.degree >= 9:
             marked_verteces.add(vertex)
@@ -189,39 +189,86 @@ def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
                 for edge in vertex.get_incident_edges():
                     marked_verteces.add(edge.destination())
                 I.add(vertex)
+                break  # Only add one vertex per iteration
 
     return I
 
 def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list:
     hierarchy = []
     P_i = P.clone()
-    
-    hierarchy.append(P_i)
 
-    # TODO complete nested hierarchy algorithm
+    hierarchy.append(P_i)
 
     while len(P_i.vertices) > 4:
         I = ConstructIndependentSet(P_i)
         P_iplusone = P_i.clone()
 
+        # Remove all vertices in the independent set
         for vertex in I:
-            P_iplusone.remove_vertex(vertex)
-            # retriangulate hole
-            N_v = vertex.get_neighbors()
+            # Find the vertex in the cloned graph by ID
+            vertex_to_remove = None
+            for v in P_iplusone.vertices:
+                if v.id == vertex.id:
+                    vertex_to_remove = v
+                    break
+            if vertex_to_remove:
+                P_iplusone.remove_vertex(vertex_to_remove)
 
-        # link unchanged faces
+        # Triangulate once after all removals
+        P_iplusone.triangulate()
+
         hierarchy.append(P_iplusone)
         P_i = P_iplusone
 
     return hierarchy
     
-def BuildDAG(G: pg.PlanarGraph):
-    # Find bounding triangle
-    min_x, min_y = min(vertex.point[X] for vertex in G.verticies), min(vertex.point[Y] for vertex in G.verticies)
-    max_x, max_y = max(vertex.point[X] for vertex in G.verticies), max(vertex.point[Y] for vertex in G.verticies)
+def BuildDAG(G: pg.PlanarGraph) -> DAGNode:
+    """
+    Build a DAG for Kirkpatrick point location.
 
-    G.add_vertex(min_x - 1, min_y - 1)
-    G.add_vertex(max_x - 1, min_y - 1)
-    G.add_vertex((min_x + max_x)/2, max_y + 1)
+    Returns:
+        Root node of the DAG (a bounding triangle)
+    """
+    # First, triangulate the input graph
+    G_copy = G.clone()
+    triangles = G_copy.triangulate()
 
-    # TODO complete DAG algorithm
+    if not triangles:
+        # Graph is already a triangle or empty
+        if len(G.vertices) == 3:
+            # Create a single node for the triangle
+            triangle_tuple = tuple(sorted([v.id for v in G.vertices]))
+            return DAGNode(triangle_tuple)
+        return None
+
+    hierarchy = ConstructNestedPolytopeHierarchy(G_copy)
+
+    previous_hierarchy_layer = []
+    # i think we want to keep track of the previous layer to link nodes
+    for polytope in reversed(hierarchy): # traverse hierarchy top down
+
+        triangles = polytope.triangulate() # retrieve tuples of triangles
+
+        node_list = [DAGNode(triangle) for triangle in triangles]
+
+        for triangle in previous_hierarchy_layer:
+            if previous_hierarchy_layer == []: # if this is the first layer, no linking needed
+                break
+
+            for node in node_list:
+                v1, v2, v3 = (hierarchy[0].get_vertex_by_id(v) for v in node.value) # retrieve node vertices
+                t1, t2, t3 = (hierarchy[0].get_vertex_by_id(v) for v in triangle.value) # reference P0 in the hierarchy for simplicity for coordinate lookup since all vertices are intact
+                triangle_poly = poly.Polygon([t1, t2, t3])
+
+                if inTri2D(triangle_poly, v1.point) or inTri2D(triangle_poly, v2.point) or inTri2D(triangle_poly, v3.point):
+                    triangle.child.append(node)
+
+            previous_hierarchy_layer = node_list
+            node_list.clear()
+        
+        
+
+
+    
+
+
