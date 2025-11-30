@@ -710,6 +710,13 @@ class PlanarGraph:
         
         return triangles
     
+    def get_vertex_by_id(self, vertex_id: int) -> Optional[GraphVertex]:
+        """Find vertex by its id"""
+        for vertex in self.vertices:
+            if vertex.id == vertex_id:
+                return vertex
+        return None
+
     def get_vertex_by_coords(self, x: float, y: float) -> Optional[GraphVertex]:
         """Find vertex at given coordinates"""
         return self._vertex_map.get((x, y))
