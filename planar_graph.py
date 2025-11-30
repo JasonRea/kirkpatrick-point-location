@@ -229,9 +229,13 @@ class PlanarGraph:
         for old_vertex in self.vertices:
             new_vertex = vertex_map[old_vertex.id]
             for old_incident_edge in old_vertex._incident_edges:
-                new_vertex._incident_edges.append(edge_map[old_incident_edge.id])
-            if old_vertex.incident_edge is not None:
+                if old_incident_edge.id in edge_map:
+                    new_vertex._incident_edges.append(edge_map[old_incident_edge.id])
+            if old_vertex.incident_edge is not None and old_vertex.incident_edge.id in edge_map:
                 new_vertex.incident_edge = edge_map[old_vertex.incident_edge.id]
+            elif new_vertex._incident_edges:
+                # If the old incident_edge is not available, use the first available edge
+                new_vertex.incident_edge = new_vertex._incident_edges[0]
         
         # Step 6: Clone faces and link edges
         face_map: dict[int, Face] = {}  # Maps old face id to new face

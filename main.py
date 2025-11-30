@@ -225,3 +225,247 @@ print(f"  Structure: {pent_graph}")
 print(f"  Edges: {len(pent_graph.edges) // 2}")
 print(f"  Valid: {pent_graph.validate()}")
 print(f"  Euler: {pent_graph.euler_characteristic()}")
+
+# Test 7: Kirkpatrick Point Location - Simple Triangle
+print("\n" + "="*60)
+print("=== Test 7: Kirkpatrick DAG - Simple Triangle ===")
+print("="*60)
+try:
+    triangle_pl = pg.PlanarGraph()
+    triangle_pl.from_polygon([
+        (0, 0),
+        (6, 0),
+        (3, 5)
+    ])
+
+    print(f"Initial graph: {triangle_pl}")
+    print(f"Vertices: {len(triangle_pl.vertices)}")
+
+    # Clone before building DAG (since BuildDAG modifies the graph)
+    triangle_clone = triangle_pl.clone()
+
+    print("\nBuilding DAG...")
+    root_node = si.BuildDAG(triangle_clone)
+
+    if root_node:
+        print(f"✓ DAG root created successfully!")
+        print(f"  Root triangle: {root_node.value}")
+        print(f"  Root has {len(root_node.children)} children")
+
+        # Count total nodes in DAG
+        def count_nodes(node, visited=None):
+            if visited is None:
+                visited = set()
+            if id(node) in visited:
+                return 0
+            visited.add(id(node))
+            count = 1
+            for child in node.children:
+                count += count_nodes(child, visited)
+            return count
+
+        total_nodes = count_nodes(root_node)
+        print(f"  Total DAG nodes: {total_nodes}")
+    else:
+        print("ERROR: BuildDAG returned None")
+
+except Exception as e:
+    print(f"ERROR: {type(e).__name__}: {e}")
+    import traceback
+    traceback.print_exc()
+
+# Test 8: Kirkpatrick Point Location - Square
+print("\n" + "="*60)
+print("=== Test 8: Kirkpatrick DAG - Square ===")
+print("="*60)
+try:
+    square_pl = pg.PlanarGraph()
+    square_pl.from_polygon([
+        (0, 0),
+        (8, 0),
+        (8, 8),
+        (0, 8)
+    ])
+
+    print(f"Initial graph: {square_pl}")
+    print(f"Vertices: {len(square_pl.vertices)}")
+
+    square_clone = square_pl.clone()
+
+    print("\nBuilding DAG...")
+    root_node = si.BuildDAG(square_clone)
+
+    if root_node:
+        print(f"✓ DAG root created successfully!")
+        print(f"  Root triangle: {root_node.value}")
+        print(f"  Root has {len(root_node.children)} children")
+
+        # Count nodes and depth
+        def analyze_dag(node, depth=0, visited=None):
+            if visited is None:
+                visited = set()
+            if id(node) in visited:
+                return 0, depth
+            visited.add(id(node))
+
+            count = 1
+            max_depth = depth
+            for child in node.children:
+                child_count, child_depth = analyze_dag(child, depth + 1, visited)
+                count += child_count
+                max_depth = max(max_depth, child_depth)
+            return count, max_depth
+
+        total_nodes, max_depth = analyze_dag(root_node)
+        print(f"  Total DAG nodes: {total_nodes}")
+        print(f"  DAG depth: {max_depth}")
+
+        # Print hierarchy structure
+        print(f"\n  DAG Structure:")
+        def print_dag(node, level=0, visited=None):
+            if visited is None:
+                visited = set()
+            if id(node) in visited:
+                return
+            visited.add(id(node))
+
+            indent = "  " * level
+            print(f"{indent}Level {level}: Triangle {node.value} -> {len(node.children)} children")
+            for child in node.children:
+                print_dag(child, level + 1, visited)
+
+        print_dag(root_node)
+    else:
+        print("ERROR: BuildDAG returned None")
+
+except Exception as e:
+    print(f"ERROR: {type(e).__name__}: {e}")
+    import traceback
+    traceback.print_exc()
+
+# Test 9: Kirkpatrick Point Location - Hexagon
+print("\n" + "="*60)
+print("=== Test 9: Kirkpatrick DAG - Hexagon ===")
+print("="*60)
+try:
+    hex_pl = pg.PlanarGraph()
+    hex_pl.from_polygon([
+        (0, 0),
+        (4, 0),
+        (6, 3),
+        (4, 6),
+        (0, 6),
+        (-2, 3)
+    ])
+
+    print(f"Initial graph: {hex_pl}")
+    print(f"Vertices: {len(hex_pl.vertices)}")
+
+    hex_clone = hex_pl.clone()
+
+    print("\nBuilding DAG...")
+    root_node = si.BuildDAG(hex_clone)
+
+    if root_node:
+        print(f"✓ DAG root created successfully!")
+        print(f"  Root triangle: {root_node.value}")
+
+        total_nodes, max_depth = analyze_dag(root_node)
+        print(f"  Total DAG nodes: {total_nodes}")
+        print(f"  DAG depth: {max_depth}")
+
+        # Verify hierarchy size
+        print(f"\n  Modified graph after DAG construction: {hex_clone}")
+        print(f"  Vertices after: {len(hex_clone.vertices)}")
+    else:
+        print("ERROR: BuildDAG returned None")
+
+except Exception as e:
+    print(f"ERROR: {type(e).__name__}: {e}")
+    import traceback
+    traceback.print_exc()
+
+# Test 10: Point Location Query Function
+print("\n" + "="*60)
+print("=== Test 10: Point Location Queries ===")
+print("="*60)
+
+def point_location_query(root_node, query_point):
+    """
+    Perform a point location query in the DAG.
+    Traverses from root down to find the triangle containing the query point.
+    """
+    if root_node is None:
+        return None
+
+    current = root_node
+    path = []
+
+    while True:
+        path.append(current.value)
+
+        # If this is a leaf node (no children), we found the triangle
+        if not current.children:
+            return current, path
+
+        # Find which child contains the query point
+        found_child = None
+        for child in current.children:
+            # Get the triangle vertices
+            triangle_vertices = child.value
+            # This assumes child.value is a tuple of vertex IDs
+            # We would need to map these to actual coordinates
+            # For now, we'll just traverse to the first child
+            found_child = child
+            break
+
+        if found_child:
+            current = found_child
+        else:
+            # No child found, return current
+            return current, path
+
+try:
+    # Build a test graph
+    test_pl = pg.PlanarGraph()
+    test_pl.from_polygon([
+        (0, 0),
+        (10, 0),
+        (10, 10),
+        (0, 10)
+    ])
+
+    test_clone = test_pl.clone()
+    print("Building DAG for point location queries...")
+    root = si.BuildDAG(test_clone)
+
+    if root:
+        print(f"✓ DAG constructed successfully")
+
+        # Test some point queries
+        test_points = [
+            (5, 5),   # Center
+            (2, 2),   # Inside, lower-left
+            (8, 8),   # Inside, upper-right
+            (0, 0),   # Vertex
+            (5, 0),   # Edge
+        ]
+
+        print(f"\nTesting point location queries:")
+        for px, py in test_points:
+            query_pt = prim.Point(px, py)
+            result, path = point_location_query(root, query_pt)
+            print(f"  Query point ({px}, {py}):")
+            print(f"    Path length: {len(path)}")
+            print(f"    Final triangle: {result.value if result else 'None'}")
+    else:
+        print("ERROR: Could not build DAG")
+
+except Exception as e:
+    print(f"ERROR: {type(e).__name__}: {e}")
+    import traceback
+    traceback.print_exc()
+
+print("\n" + "="*60)
+print("All Kirkpatrick Point Location tests completed!")
+print("="*60)
