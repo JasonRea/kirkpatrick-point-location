@@ -214,8 +214,27 @@ def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list:
             if vertex_to_remove:
                 P_iplusone.remove_vertex(vertex_to_remove)
 
+        # Check if graph still has valid faces before triangulating
+        interior_faces = [f for f in P_iplusone.faces
+                         if f.face_type == pg.FaceType.INTERIOR]
+
+        if not interior_faces:
+            # No interior faces left, stop hierarchy construction
+            break
+
+        # Check if the face has a valid outer component
+        face = interior_faces[0]
+        if face.outer_component is None:
+            # Invalid face structure, stop hierarchy construction
+            break
+
         # Triangulate once after all removals
-        P_iplusone.triangulate()
+        try:
+            P_iplusone.triangulate()
+        except (AttributeError, ValueError) as e:
+            # If triangulation fails due to corrupted DCEL, stop hierarchy construction
+            print(f"Warning: Triangulation failed at hierarchy level with {len(P_iplusone.vertices)} vertices: {e}")
+            break
 
         hierarchy.append(P_iplusone)
         P_i = P_iplusone
@@ -227,7 +246,7 @@ def BuildDAG(G: pg.PlanarGraph) -> DAGNode:
     Build a DAG for Kirkpatrick point location.
 
     Returns:
-        Root node of the DAG (a bounding triangle)
+        Root node of the DAG (a triangle from the coarsest level)
     """
     # First, triangulate the input graph
     G_copy = G.clone()
@@ -241,34 +260,43 @@ def BuildDAG(G: pg.PlanarGraph) -> DAGNode:
             return DAGNode(triangle_tuple)
         return None
 
+    # Build the nested polytope hierarchy
     hierarchy = ConstructNestedPolytopeHierarchy(G_copy)
 
-    previous_hierarchy_layer = []
-    # i think we want to keep track of the previous layer to link nodes
-    for polytope in reversed(hierarchy): # traverse hierarchy top down
+    # Keep track of previous layer
+    previous_layer_nodes = []
 
-        triangles = polytope.triangulate() # retrieve tuples of triangles
+    for polytope in reversed(hierarchy):
+        # Get triangles for this level
+        triangles = polytope.triangulate()
 
-        node_list = [DAGNode(triangle) for triangle in triangles]
+        # Create DAG nodes for all triangles in this level
+        current_layer_nodes = [DAGNode(triangle) for triangle in triangles]
 
-        for triangle in previous_hierarchy_layer:
-            if previous_hierarchy_layer == []: # if this is the first layer, no linking needed
-                break
+        # For each parent triangle in the coarser level
+        for parent_node in previous_layer_nodes:
+            # Get parent triangle vertices from original graph
+            p1, p2, p3 = (hierarchy[0].get_vertex_by_id(v) for v in parent_node.value)
+            parent_triangle_points = [p1.point, p2.point, p3.point]
 
-            for node in node_list:
-                v1, v2, v3 = (hierarchy[0].get_vertex_by_id(v) for v in node.value) # retrieve node vertices
-                t1, t2, t3 = (hierarchy[0].get_vertex_by_id(v) for v in triangle.value) # reference P0 in the hierarchy for simplicity for coordinate lookup since all vertices are intact
-                triangle_poly = poly.Polygon([t1, t2, t3])
+            # Check which child triangles should be linked to this parent
+            for child_node in current_layer_nodes:
+                # Get child triangle vertices from original graph
+                c1, c2, c3 = (hierarchy[0].get_vertex_by_id(v) for v in child_node.value)
 
-                if inTri2D(triangle_poly, v1.point) or inTri2D(triangle_poly, v2.point) or inTri2D(triangle_poly, v3.point):
-                    triangle.child.append(node)
+                # Check if any vertex of the child triangle is contained in the parent triangle
+                # A child triangle is linked to a parent if they overlap
+                if (inTri2D(parent_triangle_points, c1.point) != 'o' or
+                    inTri2D(parent_triangle_points, c2.point) != 'o' or
+                    inTri2D(parent_triangle_points, c3.point) != 'o'):
+                    parent_node.add_child(child_node)
 
-            previous_hierarchy_layer = node_list
-            node_list.clear()
-        
-        
+        previous_layer_nodes.clear()
 
+        # Update for next iteration - create a copy to avoid reference issues
+        previous_layer_nodes = list(current_layer_nodes)
 
-    
+    # Return the root node
+    return previous_layer_nodes[0] if previous_layer_nodes else None
 
 
