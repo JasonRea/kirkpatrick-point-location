@@ -114,6 +114,9 @@ def inTri2D(tp: list, q: prim.Point):
         (area1 == 0 and area2 == 0)
     ):
         return 'v'
+    
+    else:
+        return 'o'
 
 def InPoly1(q: prim.Point, P: poly.Polygon, n: int):
     """
