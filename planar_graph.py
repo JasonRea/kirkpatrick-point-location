@@ -16,7 +16,7 @@ class FaceType(Enum):
     EXTERIOR = "exterior"
     UNBOUNDED = "unbounded"
 
-@dataclass
+@dataclass(eq=False)
 class HalfEdge:
     """
     Half-edge representation - fundamental building block.
@@ -29,18 +29,26 @@ class HalfEdge:
     prev: Optional['HalfEdge']      # Previous edge in face boundary
     face: Optional['Face']          # Face to the left of this edge
     edge_type: EdgeType = EdgeType.INTERNAL
-    
+
     def __repr__(self):
         origin_id = self.origin.id if self.origin else None
         dest_id = self.twin.origin.id if self.twin and self.twin.origin else None
         return f"HE{self.id}({origin_id}→{dest_id})"
-    
+
+    def __hash__(self):
+        return hash(self.id)
+
+    def __eq__(self, other):
+        if not isinstance(other, HalfEdge):
+            return False
+        return self.id == other.id
+
     def destination(self) -> 'GraphVertex':
         """Get the destination vertex (origin of twin)"""
         if self.twin is None:
             raise ValueError("Half-edge has no twin")
         return self.twin.origin
-    
+
     def is_boundary(self) -> bool:
         """Check if this edge is on the boundary"""
         return self.edge_type == EdgeType.BOUNDARY
@@ -103,32 +111,32 @@ class Face:
         """Get vertices on the outer boundary in order"""
         if self.outer_component is None:
             return []
-        
+
         vertices = []
+        visited = set()
         current = self.outer_component
-        
-        while True:
+
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
             vertices.append(current.origin)
             current = current.next
-            if current == self.outer_component:
-                break
-        
+
         return vertices
     
     def get_boundary_edges(self) -> list[HalfEdge]:
         """Get all edges bounding this face"""
         if self.outer_component is None:
             return []
-        
+
         edges = []
+        visited = set()
         current = self.outer_component
-        
-        while True:
+
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
             edges.append(current)
             current = current.next
-            if current == self.outer_component:
-                break
-        
+
         return edges
     
     def area(self) -> float:
@@ -220,9 +228,9 @@ class PlanarGraph:
         # Step 4: Link next/prev pointers
         for old_edge in self.edges:
             new_edge = edge_map[old_edge.id]
-            if old_edge.next is not None:
+            if old_edge.next is not None and old_edge.next.id in edge_map:
                 new_edge.next = edge_map[old_edge.next.id]
-            if old_edge.prev is not None:
+            if old_edge.prev is not None and old_edge.prev.id in edge_map:
                 new_edge.prev = edge_map[old_edge.prev.id]
         
         # Step 5: Populate incident edges for vertices
@@ -267,10 +275,11 @@ class PlanarGraph:
         # Step 7: Link outer components and inner components
         for old_face in self.faces:
             new_face = face_map[old_face.id]
-            if old_face.outer_component is not None:
+            if old_face.outer_component is not None and old_face.outer_component.id in edge_map:
                 new_face.outer_component = edge_map[old_face.outer_component.id]
             for old_inner_edge in old_face.inner_components:
-                new_face.inner_components.append(edge_map[old_inner_edge.id])
+                if old_inner_edge.id in edge_map:
+                    new_face.inner_components.append(edge_map[old_inner_edge.id])
         
         # Step 8: Link faces to edges
         for old_edge in self.edges:
@@ -720,6 +729,21 @@ class PlanarGraph:
     def get_vertex_by_coords(self, x: float, y: float) -> Optional[GraphVertex]:
         """Find vertex at given coordinates"""
         return self._vertex_map.get((x, y))
+
+    def get_coords_by_vertex_id(self, vertex_id: int) -> Optional[tuple[float, float]]:
+        """
+        Get coordinates for a vertex given its ID.
+
+        Args:
+            vertex_id: The ID of the vertex
+
+        Returns:
+            A tuple (x, y) of the vertex coordinates, or None if vertex not found
+        """
+        vertex = self.get_vertex_by_id(vertex_id)
+        if vertex is None:
+            return None
+        return (vertex.point[prim.X], vertex.point[prim.Y])
     
     def get_incident_edges_for_vertex(self, vertex: GraphVertex) -> list[HalfEdge]:
         """

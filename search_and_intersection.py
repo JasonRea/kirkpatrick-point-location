@@ -53,6 +53,35 @@ def SegSegInt(a: prim.Point, b: prim.Point, c: prim.Point, d: prim.Point, p: pri
 
     return code
 
+
+
+def TriTriInt(t1: poly.Polygon, t2: poly.Polygon):
+    for point in t2.points:
+        if inTri2D(t1.points, point) == 'f':
+            return True
+
+    for point in t1.points:
+        if inTri2D(t2.points, point) == 'f':
+            return True
+        
+    a, b, c = t1.points
+    d, e, f = t2.points
+    p = prim.Point(0, 0)
+
+    if SegSegInt(a, b, d, e, p) == '1': return True
+    if SegSegInt(a, b, d, f, p) == '1': return True
+    if SegSegInt(a, b, e, f, p) == '1': return True
+
+    if SegSegInt(a, c, d, e, p) == '1': return True
+    if SegSegInt(a, c, d, f, p) == '1': return True
+    if SegSegInt(a, c, e, f, p) == '1': return True
+
+    if SegSegInt(b, c, d, e, p) == '1': return True
+    if SegSegInt(b, c, d, f, p) == '1': return True
+    if SegSegInt(b, c, e, f, p) == '1': return True
+
+    return False
+
 def ParallelInt(a: prim.Point, b: prim.Point, c: prim.Point, d: prim.Point, p: prim.Point):
     if not prim.Collinear(a, b, c):
         return 0
@@ -168,18 +197,15 @@ def InPoly1(q: prim.Point, P: poly.Polygon, n: int):
     # Even crossings means outside
     else:
         return 'o'
-    
-
-class DAGNode():
-    def __init__(self, value: tuple):
-        self.value = value
-        self.children = []
-    def add_child(self, child):
-        self.children.append(child)
 
 def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
     I = set()
     marked_verteces = set()
+
+    # mark bounding box (last 3 vertices)
+    marked_verteces.add(G.vertices[-1])
+    marked_verteces.add(G.vertices[-2])
+    marked_verteces.add(G.vertices[-3])
 
     for vertex in G.vertices:
         if vertex.degree >= 9:
@@ -196,7 +222,7 @@ def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
 
     return I
 
-def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list:
+def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list[pg.PlanarGraph]:
     hierarchy = []
     P_i = P.clone()
 
@@ -243,63 +269,3 @@ def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list:
         P_i = P_iplusone
 
     return hierarchy
-    
-def BuildDAG(G: pg.PlanarGraph) -> DAGNode:
-    """
-    Build a DAG for Kirkpatrick point location.
-
-    Returns:
-        Root node of the DAG (a triangle from the coarsest level)
-    """
-    # First, triangulate the input graph
-    G_copy = G.clone()
-    triangles = G_copy.triangulate()
-
-    if not triangles:
-        # Graph is already a triangle or empty
-        if len(G.vertices) == 3:
-            # Create a single node for the triangle
-            triangle_tuple = tuple(sorted([v.id for v in G.vertices]))
-            return DAGNode(triangle_tuple)
-        return None
-
-    # Build the nested polytope hierarchy
-    hierarchy = ConstructNestedPolytopeHierarchy(G_copy)
-
-    # Keep track of previous layer
-    previous_layer_nodes = []
-
-    for polytope in reversed(hierarchy):
-        # Get triangles for this level
-        triangles = polytope.triangulate()
-
-        # Create DAG nodes for all triangles in this level
-        current_layer_nodes = [DAGNode(triangle) for triangle in triangles]
-
-        # For each parent triangle in the coarser level
-        for parent_node in previous_layer_nodes:
-            # Get parent triangle vertices from original graph
-            p1, p2, p3 = (hierarchy[0].get_vertex_by_id(v) for v in parent_node.value)
-            parent_triangle_points = [p1.point, p2.point, p3.point]
-
-            # Check which child triangles should be linked to this parent
-            for child_node in current_layer_nodes:
-                # Get child triangle vertices from original graph
-                c1, c2, c3 = (hierarchy[0].get_vertex_by_id(v) for v in child_node.value)
-
-                # Check if any vertex of the child triangle is contained in the parent triangle
-                # A child triangle is linked to a parent if they overlap
-                if (inTri2D(parent_triangle_points, c1.point) != 'o' or
-                    inTri2D(parent_triangle_points, c2.point) != 'o' or
-                    inTri2D(parent_triangle_points, c3.point) != 'o'):
-                    parent_node.add_child(child_node)
-
-        previous_layer_nodes.clear()
-
-        # Update for next iteration - create a copy to avoid reference issues
-        previous_layer_nodes = list(current_layer_nodes)
-
-    # Return the root node
-    return previous_layer_nodes[0] if previous_layer_nodes else None
-
-
