@@ -17,6 +17,21 @@ class DAGNode():
             points.append(P.get_coords_by_vertex_id(vertex))
 
         return poly.Polygon(points)
+    
+#
+# IMPORTANT NOTE!!!!!
+#
+#
+# The main issue arises from after trying to bound the triangle around the current PSLG
+# What happens is we have two disconnected graph components
+# We need to connect them
+# This is how
+# Take the convex hull of the current PSLG
+# Now we have the bounding triangle and a 'hole'
+# Triangulate this polygon with a hole [O(n log n) I believe?] and internal faces
+# Add the new edges and faces into the winged-edge
+# bada bing bada boom
+#
 
 def BoundTriangle(P: pg.PlanarGraph):
     """
@@ -40,7 +55,7 @@ def BoundTriangle(P: pg.PlanarGraph):
 
     width = max_x - min_x
     height = max_y - min_y
-    padding = max(width, height) * 2  # Use larger padding to ensure containment
+    padding = max(width, height) * 0.5  # Use larger padding to ensure containment
 
     # Create 3 bounding vertices forming a large triangle
     # Bottom-left, bottom-right, top-center
@@ -49,6 +64,7 @@ def BoundTriangle(P: pg.PlanarGraph):
         prim.Point(max_x + padding, min_y - padding),
         prim.Point((min_x + max_x) / 2, max_y + padding * 2)
     ]
+    print(bounding_points)
 
     # Add the three bounding vertices
     bounding_vertices = []
@@ -107,3 +123,5 @@ def BuildDAG(P: pg.PlanarGraph):
                     new_node.add_child(node)
 
     return dag_nodes[-1] # return head of DAG
+
+# TODO fix kirk to start with a fully triangulated graph
