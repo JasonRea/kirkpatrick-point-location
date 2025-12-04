@@ -202,23 +202,35 @@ def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
     I = set()
     marked_verteces = set()
 
-    # mark bounding box (last 3 vertices)
-    marked_verteces.add(G.vertices[-1])
-    marked_verteces.add(G.vertices[-2])
-    marked_verteces.add(G.vertices[-3])
+    # mark bounding box (last 3 vertices) only if we have more than 3 vertices
+    # For Kirkpatrick's algorithm, the bounding triangle should not be in the independent set
+    if len(G.vertices) > 3:
+        marked_verteces.add(G.vertices[-1])
+        marked_verteces.add(G.vertices[-2])
+        marked_verteces.add(G.vertices[-3])
 
     for vertex in G.vertices:
         if vertex.degree >= 9:
             marked_verteces.add(vertex)
 
     while len(marked_verteces) != len(G.vertices):
-        for vertex in G.vertices:
+        # Make a copy of the vertices list to avoid modification during iteration
+        vertices_copy = list(G.vertices)
+        found_vertex = False
+        for vertex in vertices_copy:
             if vertex not in marked_verteces:
+                found_vertex = True
                 marked_verteces.add(vertex)
                 for edge in vertex.get_incident_edges():
-                    marked_verteces.add(edge.destination())
+                    # Get the other endpoint of the edge
+                    neighbor = edge.destination if edge.origin == vertex else edge.origin
+                    marked_verteces.add(neighbor)
                 I.add(vertex)
                 break  # Only add one vertex per iteration
+
+        # Safety check: if no unmarked vertex was found, break to avoid infinite loop
+        if not found_vertex:
+            break
 
     return I
 
@@ -251,9 +263,9 @@ def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list[pg.PlanarGraph]:
             # No interior faces left, stop hierarchy construction
             break
 
-        # Check if the face has a valid outer component
+        # Check if the face has a valid boundary edge
         face = interior_faces[0]
-        if face.outer_component is None:
+        if face.boundary_edge is None:
             # Invalid face structure, stop hierarchy construction
             break
 
