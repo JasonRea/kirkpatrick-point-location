@@ -1253,6 +1253,78 @@ class PlanarGraph:
         return (f"PlanarGraph(V={len(self.vertices)}, "
                 f"E={len(self.edges)}, F={len(self.faces)})")
 
+    def compute_convex_hull(self) -> list[GraphVertex]:
+        """
+        Compute the convex hull of all vertices using the giftwrapping (Jarvis march) algorithm.
+
+        Uses only the Left test from primitives to determine point orientation.
+        The algorithm wraps around the point set, at each step finding the point that
+        makes the rightmost turn (most counterclockwise) from the current edge.
+
+        Returns:
+            List of vertices forming the convex hull in counter-clockwise order.
+            Returns empty list if there are fewer than 3 vertices.
+        """
+        if len(self.vertices) < 3:
+            return []
+
+        # Step 1: Find the starting point (lowest y, then leftmost)
+        start = min(self.vertices, key=lambda v: (v.point[prim.Y], v.point[prim.X]))
+
+        hull = []
+        current = start
+
+        while True:
+            hull.append(current)
+
+            # Find the next point on the hull
+            # Start by assuming the next candidate is the first point that isn't current
+            next_point = None
+            for v in self.vertices:
+                if v != current:
+                    next_point = v
+                    break
+
+            # Find the point that is "most counterclockwise" from current
+            # For CCW hull: we want the point such that all other points are to the RIGHT
+            # of the line current->next_point (or equivalently, next_point is the leftmost)
+            for candidate in self.vertices:
+                if candidate == current or candidate == next_point:
+                    continue
+
+                # Check if candidate is to the RIGHT of the line current->next_point
+                # If so, next_point was too far left, so replace it with candidate
+                # Equivalently: if next_point is to the LEFT of current->candidate, replace next_point
+                if prim.Left(current.point, candidate.point, next_point.point):
+                    # next_point is to the left of current->candidate
+                    # so candidate is more to the right (more counterclockwise for hull)
+                    next_point = candidate
+                elif prim.Collinear(current.point, next_point.point, candidate.point):
+                    # If collinear, choose the one that is farther away
+                    dx_next = next_point.point[prim.X] - current.point[prim.X]
+                    dy_next = next_point.point[prim.Y] - current.point[prim.Y]
+                    dist_next_sq = dx_next * dx_next + dy_next * dy_next
+
+                    dx_cand = candidate.point[prim.X] - current.point[prim.X]
+                    dy_cand = candidate.point[prim.Y] - current.point[prim.Y]
+                    dist_cand_sq = dx_cand * dx_cand + dy_cand * dy_cand
+
+                    if dist_cand_sq > dist_next_sq:
+                        next_point = candidate
+
+            # Move to the next point
+            current = next_point
+
+            # If we've wrapped around to the start, we're done
+            if current == start:
+                break
+
+            # Safety check to prevent infinite loops
+            if len(hull) > len(self.vertices):
+                break
+
+        return hull
+
     def print_structure(self):
         """Print detailed structure information"""
         print(self)
