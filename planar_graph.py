@@ -882,6 +882,18 @@ class PlanarGraph:
         if n < 3:
             return []
 
+        # Check winding order and reverse if CW (ear clipping requires CCW)
+        # Compute signed area: positive = CW, negative = CCW
+        signed_area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            signed_area += (vertices_list[j].point[prim.X] - vertices_list[i].point[prim.X]) * \
+                          (vertices_list[j].point[prim.Y] + vertices_list[i].point[prim.Y])
+
+        # If CW winding (positive area), reverse the order
+        if signed_area > 0:
+            vertices_list = list(reversed(vertices_list))
+
         # Create vertex mapping
         vertex_map = {i: gv for i, gv in enumerate(vertices_list)}
 
