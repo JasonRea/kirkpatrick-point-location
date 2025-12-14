@@ -49,52 +49,30 @@ class GraphVertex:
     @property
     def degree(self) -> int:
         """Count incident edges"""
-        if not self.dcel_vertex.incidentEdge:
-            return 0
-        count = 0
-        edge = self.dcel_vertex.incidentEdge
-        start = edge
-        while True:
-            count += 1
-            edge = edge.twin.next
-            if edge == start:
-                break
-        return count
+        # pydcel has degree attribute
+        return self.dcel_vertex.degree
 
     @property
     def incident_edge(self):
         """Get incident half-edge"""
-        return self.dcel_vertex.incidentEdge
+        hedges = self.dcel_vertex.hedgelist
+        return hedges[0] if hedges else None
 
     def get_incident_edges(self) -> List['Edge']:
         """Get all edges incident to this vertex"""
-        edges = []
-        if not self.dcel_vertex.incidentEdge:
-            return edges
-
-        edge = self.dcel_vertex.incidentEdge
-        start = edge
-        while True:
-            # Create Edge wrapper (will be done by PlanarGraph)
-            edges.append(edge)
-            edge = edge.twin.next
-            if edge == start:
-                break
-        return edges
+        # pydcel has hedgelist attribute
+        return list(self.dcel_vertex.hedgelist)
 
     def get_neighbors(self) -> List['GraphVertex']:
         """Get all neighboring vertices"""
         neighbors = []
-        if not self.dcel_vertex.incidentEdge:
-            return neighbors
+        hedges = self.dcel_vertex.hedgelist
 
-        edge = self.dcel_vertex.incidentEdge
-        start = edge
-        while True:
-            neighbors.append(edge.twin.origin)
-            edge = edge.twin.next
-            if edge == start:
-                break
+        for hedge in hedges:
+            # Each half-edge goes from this vertex to a neighbor
+            neighbor_vertex = hedge.twin.origin
+            neighbors.append(neighbor_vertex)
+
         return neighbors
 
     def __repr__(self):
@@ -430,10 +408,14 @@ class PlanarGraph:
     def triangulate(self) -> List[Tuple[int, int, int]]:
         """
         Triangulate all faces using ear clipping algorithm.
+        Adds diagonal edges to subdivide non-triangular faces.
         Returns list of triangles as (v0_id, v1_id, v2_id) tuples.
         """
         triangles = []
+        all_diagonals = []  # Collect all diagonals to add at once
 
+        # Collect faces to triangulate (make a copy since we'll modify the graph)
+        faces_to_process = []
         for face in self.faces:
             if face == self.unbounded_face:
                 continue
@@ -442,6 +424,10 @@ class PlanarGraph:
             if len(vertices) < 3:
                 continue  # Skip degenerate faces
 
+            faces_to_process.append((face, vertices))
+
+        # Process each face
+        for face, vertices in faces_to_process:
             if len(vertices) == 3:
                 # Already a triangle
                 v_ids = [self._vertex_map[v].id if v in self._vertex_map else v.id for v in vertices]
@@ -449,23 +435,45 @@ class PlanarGraph:
                 continue
 
             # Ear clipping for polygons with 4+ vertices
-            face_triangles = self._triangulate_face(vertices)
+            face_triangles, diagonals = self._triangulate_face(vertices)
             triangles.extend(face_triangles)
+            all_diagonals.extend(diagonals)
+
+        # Add all diagonal edges at once and rebuild DCEL once
+        if all_diagonals:
+            for gv0, gv2 in all_diagonals:
+                self.add_edge(gv0, gv2, EdgeType.INTERNAL)
+
+            # Rebuild DCEL to update face structure
+            self.rebuild_dcel()
 
         return triangles
 
-    def _triangulate_face(self, vertices: List) -> List[Tuple[int, int, int]]:
+    def _triangulate_face(self, vertices: List) -> tuple[List[Tuple[int, int, int]], List[tuple]]:
         """
         Triangulate a single face using ear clipping.
+        Returns (triangles, diagonals) where:
+        - triangles: list of (v0_id, v1_id, v2_id) tuples
+        - diagonals: list of (GraphVertex, GraphVertex) tuples for edges to add
         """
         triangles = []
+        diagonals_to_add = []  # Store diagonals to add after ear clipping
 
         # Convert to list of vertex indices
         vert_list = list(vertices)
         n = len(vert_list)
 
         if n < 3:
-            return triangles
+            return triangles, diagonals_to_add
+
+        # Helper function to get GraphVertex from a vertex object
+        def get_graph_vertex(v):
+            if v in self._vertex_map:
+                return self._vertex_map[v]
+            elif hasattr(v, 'id'):
+                # It's already a GraphVertex
+                return v
+            return None
 
         # Ear clipping algorithm
         attempts = 0
@@ -509,6 +517,23 @@ class PlanarGraph:
 
                     triangles.append((v0_id, v1_id, v2_id))
 
+                    # Add diagonal edge from v0 to v2 (skipping the ear vertex v1)
+                    # This edge subdivides the face
+                    gv0 = get_graph_vertex(v0)
+                    gv2 = get_graph_vertex(v2)
+
+                    if gv0 and gv2 and prev_idx != next_idx:
+                        # Check if edge doesn't already exist
+                        edge_exists = False
+                        for edge in self.edges:
+                            if ((edge.origin == gv0 and edge.destination == gv2) or
+                                (edge.origin == gv2 and edge.destination == gv0)):
+                                edge_exists = True
+                                break
+
+                        if not edge_exists:
+                            diagonals_to_add.append((gv0, gv2))
+
                     # Remove the ear vertex
                     vert_list.pop(i)
                     ear_found = True
@@ -529,7 +554,7 @@ class PlanarGraph:
                     v_ids.append(id(v))
             triangles.append(tuple(v_ids))
 
-        return triangles
+        return triangles, diagonals_to_add
 
     def _is_ear(self, vertices: List, i: int) -> bool:
         """Check if vertex i is an ear of the polygon"""
@@ -690,6 +715,57 @@ class PlanarGraph:
             verts = f.get_boundary_vertices()
             vert_ids = [self._vertex_map[v].id if v in self._vertex_map else id(v) for v in verts]
             print(f"  {f} vertices={vert_ids} area={f.area():.2f}")
+
+    def clone(self) -> 'PlanarGraph':
+        """Create a deep copy of this planar graph"""
+        new_graph = PlanarGraph()
+
+        # Extract all vertices and edges
+        vertex_coords = [(v.point[prim.X], v.point[prim.Y]) for v in self.vertices]
+
+        edge_pairs = []
+        seen_pairs = set()
+        for edge in self.edges:
+            v1_idx = self.vertices.index(edge.origin)
+            v2_idx = self.vertices.index(edge.destination)
+
+            pair = tuple(sorted([v1_idx, v2_idx]))
+            if pair not in seen_pairs:
+                edge_pairs.append((v1_idx, v2_idx))
+                seen_pairs.add(pair)
+
+        # Build new DCEL
+        new_graph.dcel.build_dcel(vertex_coords, edge_pairs)
+
+        # Create vertex wrappers
+        for idx, dcel_vertex in enumerate(new_graph.dcel.vertices):
+            graph_vertex = GraphVertex(dcel_vertex, new_graph._next_vertex_id, idx)
+            new_graph._next_vertex_id += 1
+            new_graph.vertices.append(graph_vertex)
+            new_graph._vertex_map[dcel_vertex] = graph_vertex
+
+        # Create edge wrappers
+        seen_edges = set()
+        for hedge in new_graph.dcel.hedges:
+            hedge_id = id(hedge)
+            twin_id = id(hedge.twin)
+            if twin_id not in seen_edges:
+                # Preserve edge type from original
+                orig_idx = new_graph._next_edge_id
+                edge_type = self.edges[orig_idx].edge_type if orig_idx < len(self.edges) else EdgeType.INTERNAL
+
+                edge = Edge(hedge, new_graph._next_edge_id, edge_type, graph=new_graph)
+                new_graph._next_edge_id += 1
+                new_graph.edges.append(edge)
+                new_graph._edge_map[hedge] = edge
+                new_graph._edge_map[hedge.twin] = edge
+                seen_edges.add(hedge_id)
+                seen_edges.add(twin_id)
+
+        # Rebuild faces
+        new_graph.rebuild_faces()
+
+        return new_graph
 
     def __repr__(self):
         return f"PlanarGraph(V={len(self.vertices)}, E={len(self.edges)}, F={len(self.faces)})"
