@@ -1,37 +1,32 @@
 """
-Planar Graph with Winged-Edge Data Structure
+Planar Graph with DCEL (Doubly Connected Edge List) Data Structure
 
-This module implements a proper winged-edge data structure for representing planar graphs.
-The winged-edge structure stores topological information efficiently for traversal and modification.
+This module implements a planar graph using the pydcel library, which provides
+a robust DCEL implementation. The DCEL structure efficiently represents planar
+subdivisions and supports topological queries and modifications.
 
-Winged-Edge Topology:
---------------------
-Each edge stores:
-- Two endpoint vertices (origin and destination)
-- Two incident faces (left and right, when traversing from origin to destination)
-- Four adjacent edges:
-  - prev_at_origin: predecessor edge in CCW order around origin vertex
-  - next_at_origin: successor edge in CCW order around origin vertex
-  - prev_at_dest: predecessor edge in CCW order around destination vertex
-  - next_at_dest: successor edge in CCW order around destination vertex
+DCEL Structure:
+--------------
+- Vertices: Points in 2D space
+- Half-Edges: Directed edges with twin, next, prev pointers
+- Faces: Regions bounded by half-edge cycles
 
-This allows efficient traversal of:
-- All edges incident to a vertex (walk CCW around vertex)
-- All edges bounding a face (walk along face boundary)
-- Navigate between adjacent edges and faces
+This wrapper provides compatibility with the existing codebase while using
+pydcel's efficient DCEL implementation underneath.
 """
 
-from typing import Optional
+from typing import Optional, List, Tuple
 from enum import Enum
 import primitives as prim
+from dcel import Dcel, Vertex, HalfEdge, Face as DcelFace
 
 
 class EdgeType(Enum):
     """Classification of edges in the planar graph"""
-    BOUNDARY = "boundary"      # Part of original polygon boundary
-    DIAGONAL = "diagonal"      # Triangulation diagonal
-    INTERNAL = "internal"      # Internal edge in subdivision
-    EXTERNAL = "external"      # External edge
+    BOUNDARY = "boundary"
+    DIAGONAL = "diagonal"
+    INTERNAL = "internal"
+    EXTERNAL = "external"
 
 
 class FaceType(Enum):
@@ -43,27 +38,69 @@ class FaceType(Enum):
 
 class GraphVertex:
     """
-    Vertex in the planar graph with winged-edge support.
-
-    Attributes:
-        id: Unique identifier for the vertex
-        point: Geometric position (primitives.Point)
-        incident_edge: One edge originating from this vertex (for traversal)
-        degree: Number of edges incident to this vertex
+    Wrapper for pydcel Vertex with additional metadata.
     """
-
-    def __init__(self, vertex_id: int, point: prim.Point):
+    def __init__(self, dcel_vertex: Vertex, vertex_id: int, dcel_index: int):
+        self.dcel_vertex = dcel_vertex
         self.id = vertex_id
-        self.point = point
-        self.incident_edge: Optional['Edge'] = None
-        self.degree = 0
+        self.dcel_index = dcel_index  # Index in DCEL vertices list
+        self.point = prim.Point(dcel_vertex.x, dcel_vertex.y)
+
+    @property
+    def degree(self) -> int:
+        """Count incident edges"""
+        if not self.dcel_vertex.incidentEdge:
+            return 0
+        count = 0
+        edge = self.dcel_vertex.incidentEdge
+        start = edge
+        while True:
+            count += 1
+            edge = edge.twin.next
+            if edge == start:
+                break
+        return count
+
+    @property
+    def incident_edge(self):
+        """Get incident half-edge"""
+        return self.dcel_vertex.incidentEdge
+
+    def get_incident_edges(self) -> List['Edge']:
+        """Get all edges incident to this vertex"""
+        edges = []
+        if not self.dcel_vertex.incidentEdge:
+            return edges
+
+        edge = self.dcel_vertex.incidentEdge
+        start = edge
+        while True:
+            # Create Edge wrapper (will be done by PlanarGraph)
+            edges.append(edge)
+            edge = edge.twin.next
+            if edge == start:
+                break
+        return edges
+
+    def get_neighbors(self) -> List['GraphVertex']:
+        """Get all neighboring vertices"""
+        neighbors = []
+        if not self.dcel_vertex.incidentEdge:
+            return neighbors
+
+        edge = self.dcel_vertex.incidentEdge
+        start = edge
+        while True:
+            neighbors.append(edge.twin.origin)
+            edge = edge.twin.next
+            if edge == start:
+                break
+        return neighbors
 
     def __repr__(self):
-        return f"V{self.id}({self.point.coords[0]:.2f}, {self.point.coords[1]:.2f})"
+        return f"V{self.id}({self.point[prim.X]:.2f}, {self.point[prim.Y]:.2f})"
 
     def __hash__(self):
-        if self.id is None:
-            raise ValueError(f"Cannot hash vertex with None id: {self}")
         return hash(self.id)
 
     def __eq__(self, other):
@@ -71,98 +108,80 @@ class GraphVertex:
             return False
         return self.id == other.id
 
-    def get_incident_edges(self) -> list['Edge']:
-        """
-        Get all edges incident to this vertex by walking CCW around the vertex.
-        Uses the winged-edge next_at_origin pointers for efficient traversal.
-        """
-        if self.incident_edge is None:
-            return []
-
-        edges = []
-        visited_edge_ids = set()
-        current = self.incident_edge
-        first_edge_id = current.id
-
-        # Add first edge
-        edges.append(current)
-        visited_edge_ids.add(current.id)
-
-        # Move to next edge CCW around this vertex
-        if current.origin == self:
-            current = current.next_at_origin
-        else:
-            current = current.next_at_dest
-
-        # Continue until we loop back to the first edge, reach None, or detect a cycle
-        while current is not None and current.id != first_edge_id:
-            # Detect infinite loops by checking if we've seen this edge before
-            if current.id in visited_edge_ids:
-                break
-
-            edges.append(current)
-            visited_edge_ids.add(current.id)
-
-            # Move to next edge CCW around this vertex
-            if current.origin == self:
-                current = current.next_at_origin
-            else:
-                current = current.next_at_dest
-
-        return edges
-
-    def get_neighbors(self) -> list['GraphVertex']:
-        """Get all neighboring vertices"""
-        neighbors = []
-        for edge in self.get_incident_edges():
-            # Get the other endpoint
-            neighbor = edge.destination if edge.origin == self else edge.origin
-            neighbors.append(neighbor)
-        return neighbors
-
 
 class Edge:
     """
-    Winged-edge representation of an undirected edge.
-
-    A winged-edge stores complete topological information:
-    - Two endpoints (origin and destination)
-    - Two incident faces (left and right, when traversing origin → destination)
-    - Four adjacent edges for CCW traversal around each endpoint
-
-    The "wings" are the four adjacent edge pointers that enable efficient traversal.
-
-    Attributes:
-        id: Unique identifier
-        origin: Starting vertex
-        destination: Ending vertex
-        left_face: Face to the left when traversing origin → destination
-        right_face: Face to the right when traversing origin → destination
-        prev_at_origin: Previous edge CCW around origin
-        next_at_origin: Next edge CCW around origin
-        prev_at_dest: Previous edge CCW around destination
-        next_at_dest: Next edge CCW around destination
-        edge_type: Classification of this edge
+    Wrapper for pydcel HalfEdge with edge type metadata.
+    Represents an undirected edge (pair of half-edges).
     """
-
-    def __init__(self, edge_id: int, origin: GraphVertex, destination: GraphVertex,
-                 edge_type: EdgeType = EdgeType.INTERNAL):
+    def __init__(self, half_edge: HalfEdge, edge_id: int, edge_type: EdgeType = EdgeType.INTERNAL, graph=None):
+        self.half_edge = half_edge  # Primary half-edge
         self.id = edge_id
-        self.origin = origin
-        self.destination = destination
-        self.left_face: Optional['Face'] = None
-        self.right_face: Optional['Face'] = None
-
-        # The four "wings" - adjacent edges
-        self.prev_at_origin: Optional['Edge'] = None
-        self.next_at_origin: Optional['Edge'] = None
-        self.prev_at_dest: Optional['Edge'] = None
-        self.next_at_dest: Optional['Edge'] = None
-
         self.edge_type = edge_type
+        self._graph = graph  # Reference to PlanarGraph for vertex mapping
+
+    @property
+    def origin(self):
+        """Origin vertex of primary half-edge"""
+        dcel_vertex = self.half_edge.origin
+        if self._graph and dcel_vertex in self._graph._vertex_map:
+            return self._graph._vertex_map[dcel_vertex]
+        return dcel_vertex
+
+    @property
+    def destination(self):
+        """Destination vertex of primary half-edge"""
+        dcel_vertex = self.half_edge.twin.origin
+        if self._graph and dcel_vertex in self._graph._vertex_map:
+            return self._graph._vertex_map[dcel_vertex]
+        return dcel_vertex
+
+    @property
+    def left_face(self):
+        """Face on the left when traversing origin->dest"""
+        return self.half_edge.incidentFace
+
+    @property
+    def right_face(self):
+        """Face on the right when traversing origin->dest"""
+        return self.half_edge.twin.incidentFace
+
+    @left_face.setter
+    def left_face(self, face):
+        self.half_edge.incidentFace = face
+
+    @right_face.setter
+    def right_face(self, face):
+        self.half_edge.twin.incidentFace = face
+
+    @property
+    def next_at_origin(self):
+        """Next half-edge CCW around origin"""
+        return self.half_edge.twin.next
+
+    @property
+    def prev_at_origin(self):
+        """Previous half-edge CCW around origin"""
+        return self.half_edge.prev.twin
+
+    @property
+    def next_at_dest(self):
+        """Next half-edge CCW around destination"""
+        return self.half_edge.next
+
+    @property
+    def prev_at_dest(self):
+        """Previous half-edge CCW around destination"""
+        return self.half_edge.twin.prev
 
     def __repr__(self):
-        return f"E{self.id}({self.origin.id}→{self.destination.id})"
+        if hasattr(self.origin, 'id'):
+            origin_id = self.origin.id
+            dest_id = self.destination.id
+        else:
+            origin_id = id(self.origin)
+            dest_id = id(self.destination)
+        return f"E{self.id}({origin_id}→{dest_id})"
 
     def __hash__(self):
         return hash(self.id)
@@ -172,52 +191,53 @@ class Edge:
             return False
         return self.id == other.id
 
-    def is_boundary(self) -> bool:
-        """Check if this edge is on the boundary"""
-        return self.edge_type == EdgeType.BOUNDARY
-
-    def other_endpoint(self, vertex: GraphVertex) -> GraphVertex:
-        """Given one endpoint, return the other"""
-        if vertex == self.origin:
-            return self.destination
-        elif vertex == self.destination:
-            return self.origin
-        else:
-            raise ValueError(f"Vertex {vertex} is not an endpoint of edge {self}")
-
-    def get_face_on_side(self, vertex: GraphVertex) -> Optional['Face']:
-        """
-        Get the face on the left side when traversing from the given vertex.
-        If vertex is origin, returns left_face.
-        If vertex is destination, returns right_face.
-        """
-        if vertex == self.origin:
-            return self.left_face
-        elif vertex == self.destination:
-            return self.right_face
-        else:
-            raise ValueError(f"Vertex {vertex} is not an endpoint of edge {self}")
-
 
 class Face:
     """
-    Face in the planar graph.
-
-    A face is bounded by a cycle of edges. We store one edge on the boundary
-    and can traverse the complete boundary using the winged-edge pointers.
-
-    Attributes:
-        id: Unique identifier
-        boundary_edge: One edge on the face boundary (for traversal)
-        inner_components: List of edges for holes (not commonly used)
-        face_type: Classification of this face
+    Wrapper for pydcel Face with type metadata.
     """
-
-    def __init__(self, face_id: int, face_type: FaceType = FaceType.INTERIOR):
+    def __init__(self, dcel_face: DcelFace, face_id: int, face_type: FaceType = FaceType.INTERIOR):
+        self.dcel_face = dcel_face
         self.id = face_id
-        self.boundary_edge: Optional[Edge] = None
-        self.inner_components: list[Edge] = []
         self.face_type = face_type
+
+    @property
+    def boundary_edge(self):
+        """Get a boundary half-edge"""
+        return self.dcel_face.wedge if self.dcel_face else None
+
+    def get_boundary_vertices(self) -> List:
+        """Get vertices bounding this face in order"""
+        if not self.dcel_face:
+            return []
+        # pydcel Face has vertices() method
+        return list(self.dcel_face.vertices())
+
+    def get_boundary_edges(self) -> List:
+        """Get half-edges bounding this face"""
+        if not self.dcel_face:
+            return []
+        # pydcel Face has edges() method
+        return list(self.dcel_face.edges())
+
+    def area(self) -> float:
+        """Compute signed area of face"""
+        vertices = self.get_boundary_vertices()
+        if len(vertices) < 3:
+            return 0.0
+
+        area = 0.0
+        n = len(vertices)
+        for i in range(n):
+            j = (i + 1) % n
+            if hasattr(vertices[i], 'x'):
+                x1, y1 = vertices[i].x, vertices[i].y
+                x2, y2 = vertices[j].x, vertices[j].y
+            else:
+                x1, y1 = vertices[i].point[prim.X], vertices[i].point[prim.Y]
+                x2, y2 = vertices[j].point[prim.X], vertices[j].point[prim.Y]
+            area += x1 * y2 - x2 * y1
+        return area / 2.0
 
     def __repr__(self):
         return f"Face{self.id}({self.face_type.value})"
@@ -230,1124 +250,446 @@ class Face:
             return False
         return self.id == other.id
 
-    def get_boundary_vertices(self) -> list[GraphVertex]:
-        """
-        Get vertices on the boundary in order by walking around the face.
-        Uses winged-edge pointers to traverse the face boundary.
-        """
-        if self.boundary_edge is None:
-            return []
-
-        vertices = []
-        visited_edges = set()
-        current_edge = self.boundary_edge
-
-        while current_edge and current_edge.id not in visited_edges:
-            visited_edges.add(current_edge.id)
-
-            # Determine which vertex to add based on which face we're traversing
-            if current_edge.left_face == self:
-                vertices.append(current_edge.origin)
-                # Move to next edge along this face (CCW around face)
-                current_edge = self._next_edge_ccw(current_edge, at_origin=False)
-            elif current_edge.right_face == self:
-                vertices.append(current_edge.destination)
-                # Move to next edge along this face
-                current_edge = self._next_edge_ccw(current_edge, at_origin=True)
-            else:
-                break
-
-        return vertices
-
-    def get_boundary_edges(self) -> list[Edge]:
-        """Get all edges bounding this face"""
-        if self.boundary_edge is None:
-            return []
-
-        edges = []
-        visited_edges = set()
-        current_edge = self.boundary_edge
-
-        while current_edge and current_edge.id not in visited_edges:
-            visited_edges.add(current_edge.id)
-            edges.append(current_edge)
-
-            # Move to next edge along this face
-            if current_edge.left_face == self:
-                current_edge = self._next_edge_ccw(current_edge, at_origin=False)
-            elif current_edge.right_face == self:
-                current_edge = self._next_edge_ccw(current_edge, at_origin=True)
-            else:
-                break
-
-        return edges
-
-    def _next_edge_ccw(self, edge: Edge, at_origin: bool) -> Optional[Edge]:
-        """
-        Get the next edge CCW around the face boundary.
-
-        Args:
-            edge: Current edge
-            at_origin: True if we're at the origin of the edge, False if at destination
-        """
-        if at_origin:
-            # At origin, moving CCW around face means taking prev_at_origin
-            return edge.prev_at_origin
-        else:
-            # At destination, moving CCW around face means taking next_at_dest
-            return edge.next_at_dest
-
-    def area(self) -> float:
-        """Compute the signed area of this face using the shoelace formula"""
-        vertices = self.get_boundary_vertices()
-        if len(vertices) < 3:
-            return 0.0
-
-        area = 0.0
-        n = len(vertices)
-        for i in range(n):
-            j = (i + 1) % n
-            area += vertices[i].point[prim.X] * vertices[j].point[prim.Y]
-            area -= vertices[j].point[prim.X] * vertices[i].point[prim.Y]
-
-        return area / 2.0
-
-
-# Alias for backward compatibility with existing code
-HalfEdge = Edge  # Map old HalfEdge references to Edge
-
 
 class PlanarGraph:
     """
-    Planar graph with winged-edge data structure.
-
-    This class maintains a collection of vertices, edges, and faces representing
-    a planar graph embedded in 2D. The winged-edge structure provides efficient
-    traversal and modification operations needed for Kirkpatrick's algorithm.
+    Planar graph using DCEL (via pydcel) for efficient topological operations.
     """
 
     def __init__(self):
-        self.vertices: list[GraphVertex] = []
-        self.edges: list[Edge] = []
-        self.faces: list[Face] = []
+        self.dcel = Dcel()
+        self.vertices: List[GraphVertex] = []
+        self.edges: List[Edge] = []
+        self.faces: List[Face] = []
+        self.unbounded_face: Optional[Face] = None
 
-        self._vertex_map: dict[tuple[float, float], GraphVertex] = {}
         self._next_vertex_id = 0
         self._next_edge_id = 0
         self._next_face_id = 0
 
-        # Create unbounded face
-        self.unbounded_face = Face(
-            face_id=self._next_face_id,
-            face_type=FaceType.UNBOUNDED
-        )
-        self.faces.append(self.unbounded_face)
-        self._next_face_id += 1
-
-    def clone(self) -> 'PlanarGraph':
-        """
-        Create a deep clone of this planar graph.
-        All vertices, edges, faces, and their relationships are duplicated.
-
-        Returns:
-            A new PlanarGraph instance that is independent from the original.
-        """
-        cloned_graph = PlanarGraph()
-        cloned_graph._next_vertex_id = self._next_vertex_id
-        cloned_graph._next_edge_id = self._next_edge_id
-        cloned_graph._next_face_id = self._next_face_id
-
-        # Step 1: Clone all vertices
-        vertex_map: dict[int, GraphVertex] = {}
-        for old_vertex in self.vertices:
-            new_vertex = GraphVertex(
-                vertex_id=old_vertex.id,
-                point=prim.Point(old_vertex.point[prim.X], old_vertex.point[prim.Y])
-            )
-            new_vertex.degree = old_vertex.degree
-            cloned_graph.vertices.append(new_vertex)
-            vertex_map[old_vertex.id] = new_vertex
-            cloned_graph._vertex_map[(old_vertex.point[prim.X], old_vertex.point[prim.Y])] = new_vertex
-
-        # Step 2: Clone all edges
-        edge_map: dict[int, Edge] = {}
-        for old_edge in self.edges:
-            new_edge = Edge(
-                edge_id=old_edge.id,
-                origin=vertex_map[old_edge.origin.id],
-                destination=vertex_map[old_edge.destination.id],
-                edge_type=old_edge.edge_type
-            )
-            cloned_graph.edges.append(new_edge)
-            edge_map[old_edge.id] = new_edge
-
-        # Step 3: Link edge winged-edge pointers
-        for old_edge in self.edges:
-            new_edge = edge_map[old_edge.id]
-            if old_edge.prev_at_origin:
-                new_edge.prev_at_origin = edge_map.get(old_edge.prev_at_origin.id)
-            if old_edge.next_at_origin:
-                new_edge.next_at_origin = edge_map.get(old_edge.next_at_origin.id)
-            if old_edge.prev_at_dest:
-                new_edge.prev_at_dest = edge_map.get(old_edge.prev_at_dest.id)
-            if old_edge.next_at_dest:
-                new_edge.next_at_dest = edge_map.get(old_edge.next_at_dest.id)
-
-        # Step 4: Update vertex incident edges
-        for old_vertex in self.vertices:
-            new_vertex = vertex_map[old_vertex.id]
-            if old_vertex.incident_edge:
-                new_vertex.incident_edge = edge_map.get(old_vertex.incident_edge.id)
-
-        # Step 5: Clone faces
-        face_map: dict[int, Face] = {}
-
-        # Clone unbounded face
-        new_unbounded_face = Face(
-            face_id=self.unbounded_face.id,
-            face_type=self.unbounded_face.face_type
-        )
-        cloned_graph.faces[0] = new_unbounded_face
-        face_map[self.unbounded_face.id] = new_unbounded_face
-
-        # Clone other faces
-        for old_face in self.faces:
-            if old_face.id == self.unbounded_face.id:
-                continue
-
-            new_face = Face(
-                face_id=old_face.id,
-                face_type=old_face.face_type
-            )
-            cloned_graph.faces.append(new_face)
-            face_map[old_face.id] = new_face
-
-        # Step 6: Link face boundary edges
-        for old_face in self.faces:
-            new_face = face_map[old_face.id]
-            if old_face.boundary_edge:
-                new_face.boundary_edge = edge_map.get(old_face.boundary_edge.id)
-            for old_inner_edge in old_face.inner_components:
-                if old_inner_edge.id in edge_map:
-                    new_face.inner_components.append(edge_map[old_inner_edge.id])
-
-        # Step 7: Link faces to edges
-        for old_edge in self.edges:
-            new_edge = edge_map[old_edge.id]
-            if old_edge.left_face:
-                new_edge.left_face = face_map.get(old_edge.left_face.id)
-            if old_edge.right_face:
-                new_edge.right_face = face_map.get(old_edge.right_face.id)
-
-        return cloned_graph
+        # Mappings from dcel objects to wrappers
+        self._vertex_map = {}  # dcel.Vertex -> GraphVertex
+        self._edge_map = {}    # dcel.HalfEdge -> Edge
+        self._face_map = {}    # dcel.Face -> Face
 
     def add_vertex(self, x: float, y: float) -> GraphVertex:
-        """
-        Add a vertex at the given coordinates.
-        If a vertex already exists at these coordinates, return it.
-        """
-        key = (x, y)
-        if key in self._vertex_map:
-            return self._vertex_map[key]
+        """Add a vertex at the given coordinates"""
+        # Check if vertex already exists at this location
+        for v in self.vertices:
+            if abs(v.point[prim.X] - x) < 1e-9 and abs(v.point[prim.Y] - y) < 1e-9:
+                return v
 
-        vertex = GraphVertex(
-            vertex_id=self._next_vertex_id,
-            point=prim.Point(x, y)
-        )
+        dcel_vertex = self.dcel.add_vertex(x, y)
+        dcel_index = len(self.dcel.vertices) - 1  # Index of the vertex just added
+        graph_vertex = GraphVertex(dcel_vertex, self._next_vertex_id, dcel_index)
         self._next_vertex_id += 1
 
-        self.vertices.append(vertex)
-        self._vertex_map[key] = vertex
+        self.vertices.append(graph_vertex)
+        self._vertex_map[dcel_vertex] = graph_vertex
 
-        return vertex
+        return graph_vertex
 
-    def add_edge(self, v1: GraphVertex, v2: GraphVertex,
-                 edge_type: EdgeType = EdgeType.INTERNAL) -> Edge:
-        """
-        Add an edge between two vertices with proper winged-edge linkage.
+    def add_edge(self, v1: GraphVertex, v2: GraphVertex, edge_type: EdgeType = EdgeType.INTERNAL) -> Edge:
+        """Add an edge between two vertices"""
+        # Add edge to DCEL using vertex indices
+        half_edge_pair = self.dcel.add_edge(v1.dcel_index, v2.dcel_index)
+        half_edge = half_edge_pair[0]  # Get first half-edge from the pair
 
-        This maintains the CCW ordering of edges around each vertex and updates
-        all winged-edge pointers (prev_at_origin, next_at_origin, etc.)
-
-        The key insight is to insert the new edge in the correct CCW position
-        based on geometric angle ordering.
-
-        Returns:
-            The new edge connecting v1 to v2
-        """
-        # Create the edge
-        edge = Edge(
-            edge_id=self._next_edge_id,
-            origin=v1,
-            destination=v2,
-            edge_type=edge_type
-        )
+        # Create Edge wrapper with graph reference
+        edge = Edge(half_edge, self._next_edge_id, edge_type, graph=self)
         self._next_edge_id += 1
 
-        # Insert edge into CCW ordering around v1 (origin)
-        self._insert_edge_at_vertex(edge, v1, at_origin=True)
-
-        # Insert edge into CCW ordering around v2 (destination)
-        self._insert_edge_at_vertex(edge, v2, at_origin=False)
-
-        # Assign faces to the new edge
-        # For now, assign unbounded face to both sides
-        # This will be updated properly when faces are created/split
-        edge.left_face = self.unbounded_face
-        edge.right_face = self.unbounded_face
-
-        # Update vertex degrees
-        v1.degree += 1
-        v2.degree += 1
-
         self.edges.append(edge)
+        self._edge_map[half_edge] = edge
+        self._edge_map[half_edge.twin] = edge  # Both half-edges map to same Edge
 
         return edge
 
-    def _insert_edge_at_vertex(self, new_edge: Edge, vertex: GraphVertex, at_origin: bool):
+    def from_polygon(self, points: List[Tuple[float, float]]) -> 'PlanarGraph':
         """
-        Insert an edge into the CCW ordering around a vertex.
-
-        Args:
-            new_edge: The edge to insert
-            vertex: The vertex around which to insert
-            at_origin: True if vertex is the origin of new_edge, False if destination
-        """
-        if vertex.incident_edge is None:
-            # First edge at this vertex - create self-loop
-            vertex.incident_edge = new_edge
-            if at_origin:
-                new_edge.prev_at_origin = new_edge
-                new_edge.next_at_origin = new_edge
-            else:
-                new_edge.prev_at_dest = new_edge
-                new_edge.next_at_dest = new_edge
-            return
-
-        # Find the correct position to insert based on CCW angle ordering
-        # We need to find edges e1 and e2 such that new_edge fits between them in CCW order
-
-        # Get the other endpoint of the new edge (the direction vector)
-        if at_origin:
-            new_direction = new_edge.destination.point
-        else:
-            new_direction = new_edge.origin.point
-
-        # Walk around the vertex to find insertion point
-        current = vertex.incident_edge
-        best_prev = None
-        best_next = None
-
-        # For each edge around the vertex, check if new_edge should go between
-        # current and current.next in CCW order
-        first_edge = current
-        while True:
-            # Get the direction of the current edge from vertex
-            if current.origin == vertex:
-                current_direction = current.destination.point
-                next_edge = current.next_at_origin
-            else:
-                current_direction = current.origin.point
-                next_edge = current.next_at_dest
-
-            # Get the direction of the next edge from vertex
-            if next_edge.origin == vertex:
-                next_direction = next_edge.destination.point
-            else:
-                next_direction = next_edge.origin.point
-
-            # Check if new_edge fits between current and next in CCW order
-            # Using cross product: if both (current × new) > 0 and (new × next) > 0,
-            # then new is between current and next in CCW order
-
-            area_current_new = prim.Area2(vertex.point, current_direction, new_direction)
-            area_new_next = prim.Area2(vertex.point, new_direction, next_direction)
-            area_current_next = prim.Area2(vertex.point, current_direction, next_direction)
-
-            # If edges span more than 180 degrees, we need different logic
-            if area_current_next <= 0:
-                # Reflex angle case (> 180 degrees)
-                if area_current_new > 0 or area_new_next > 0:
-                    best_prev = current
-                    best_next = next_edge
-                    break
-            else:
-                # Normal case (< 180 degrees)
-                if area_current_new > 0 and area_new_next > 0:
-                    best_prev = current
-                    best_next = next_edge
-                    break
-
-            current = next_edge
-            if current == first_edge:
-                # Completed the loop - insert after first_edge
-                best_prev = first_edge
-                if first_edge.origin == vertex:
-                    best_next = first_edge.next_at_origin
-                else:
-                    best_next = first_edge.next_at_dest
-                break
-
-        # Insert new_edge between best_prev and best_next
-        if at_origin:
-            new_edge.prev_at_origin = best_prev
-            new_edge.next_at_origin = best_next
-
-            # Update best_prev to point to new_edge
-            if best_prev.origin == vertex:
-                best_prev.next_at_origin = new_edge
-            else:
-                best_prev.next_at_dest = new_edge
-
-            # Update best_next to point to new_edge
-            if best_next.origin == vertex:
-                best_next.prev_at_origin = new_edge
-            else:
-                best_next.prev_at_dest = new_edge
-        else:
-            new_edge.prev_at_dest = best_prev
-            new_edge.next_at_dest = best_next
-
-            # Update best_prev to point to new_edge
-            if best_prev.origin == vertex:
-                best_prev.next_at_origin = new_edge
-            else:
-                best_prev.next_at_dest = new_edge
-
-            # Update best_next to point to new_edge
-            if best_next.origin == vertex:
-                best_next.prev_at_origin = new_edge
-            else:
-                best_next.prev_at_dest = new_edge
-
-    def remove_vertex(self, vertex: GraphVertex) -> bool:
-        """
-        Remove a vertex from the planar graph while maintaining topological consistency.
-
-        This removes all edges incident to the vertex and merges affected faces.
-        Maintains Euler characteristic: V - E + F = 2
-
-        Args:
-            vertex: The vertex to remove
-
-        Returns:
-            True if vertex was successfully removed, False otherwise
-        """
-        if vertex not in self.vertices:
-            return False
-
-        if len(self.vertices) == 1:
-            return False
-
-        # Get all incident edges
-        incident_edges = vertex.get_incident_edges()
-
-        if not incident_edges:
-            # Isolated vertex - safe to remove
-            self.vertices.remove(vertex)
-            key = (vertex.point[prim.X], vertex.point[prim.Y])
-            if key in self._vertex_map:
-                del self._vertex_map[key]
-            return True
-
-        # Collect incident faces
-        incident_faces = set()
-        for edge in incident_edges:
-            if edge.left_face and edge.left_face != self.unbounded_face:
-                incident_faces.add(edge.left_face)
-            if edge.right_face and edge.right_face != self.unbounded_face:
-                incident_faces.add(edge.right_face)
-
-        # For each pair of consecutive edges, reconnect around the removed vertex
-        for i, edge in enumerate(incident_edges):
-            next_edge = incident_edges[(i + 1) % len(incident_edges)]
-
-            # Reconnect the winged-edge pointers to bypass the removed vertex
-            # This is complex and depends on the specific topology
-            # For now, we'll handle the simpler case
-            pass
-
-        # Remove edges
-        for edge in incident_edges:
-            if edge in self.edges:
-                self.edges.remove(edge)
-
-            # Update adjacent vertices
-            other_vertex = edge.other_endpoint(vertex)
-            if other_vertex.incident_edge == edge:
-                # Find another incident edge
-                other_edges = [e for e in self.edges if e.origin == other_vertex or e.destination == other_vertex]
-                other_vertex.incident_edge = other_edges[0] if other_edges else None
-            other_vertex.degree -= 1
-
-        # Merge faces if necessary
-        if len(incident_faces) > 1:
-            primary_face = next(iter(incident_faces))
-            for secondary_face in incident_faces:
-                if secondary_face != primary_face and secondary_face in self.faces:
-                    self.faces.remove(secondary_face)
-
-        # Remove vertex
-        self.vertices.remove(vertex)
-        key = (vertex.point[prim.X], vertex.point[prim.Y])
-        if key in self._vertex_map:
-            del self._vertex_map[key]
-
-        return True
-
-    def create_face(self, boundary_edge: Edge,
-                   face_type: FaceType = FaceType.INTERIOR) -> Face:
-        """
-        Create a face with the given boundary edge.
-        Assigns the face to all edges on its boundary.
-        """
-        face = Face(
-            face_id=self._next_face_id,
-            face_type=face_type
-        )
-        face.boundary_edge = boundary_edge
-        self._next_face_id += 1
-
-        # Assign face to all boundary edges
-        visited = set()
-        current = boundary_edge
-
-        while current and current.id not in visited:
-            visited.add(current.id)
-
-            # Assign face to appropriate side of edge
-            if current.left_face is None:
-                current.left_face = face
-            elif current.right_face is None:
-                current.right_face = face
-
-            # Move to next edge on boundary
-            if current.left_face == face:
-                current = face._next_edge_ccw(current, at_origin=False)
-            elif current.right_face == face:
-                current = face._next_edge_ccw(current, at_origin=True)
-            else:
-                break
-
-            if current == boundary_edge:
-                break
-
-        self.faces.append(face)
-        return face
-
-    def from_polygon(self, points: list[tuple[float, float]]) -> 'PlanarGraph':
-        """
-        Build planar graph from a simple polygon.
-        Creates vertices and edges in order, forming one interior face.
+        Create a planar graph from a polygon (list of points).
         """
         if len(points) < 3:
-            raise ValueError("Polygon must have at least 3 vertices")
+            raise ValueError("Polygon must have at least 3 points")
 
-        # Create vertices
-        vertices = [self.add_vertex(x, y) for x, y in points]
-        n = len(vertices)
-
-        # Create edges and link them in CCW order
+        # Build edges list (indices into points list)
         edges = []
-        for i in range(n):
-            v1 = vertices[i]
-            v2 = vertices[(i + 1) % n]
-            edge = self.add_edge(v1, v2, EdgeType.BOUNDARY)
-            edges.append(edge)
+        for i in range(len(points)):
+            j = (i + 1) % len(points)
+            edges.append((i, j))
 
-        # Set up proper winged-edge linkage for the polygon boundary
-        # For a polygon, at each vertex we have exactly 2 edges meeting
-        # Walking CCW around each vertex, we go: incoming_edge → outgoing_edge
-        for i in range(n):
-            current_edge = edges[i]  # Edge i: vertices[i] → vertices[i+1]
-            next_edge = edges[(i + 1) % n]  # Edge i+1: vertices[i+1] → vertices[i+2]
-            prev_edge = edges[(i - 1) % n]  # Edge i-1: vertices[i-1] → vertices[i]
+        # Build DCEL with all data at once
+        self.dcel.build_dcel(points, edges)
 
-            # At origin of current_edge (vertices[i]):
-            # - prev edge arriving at V[i] is prev_edge (it ends at V[i])
-            # - next edge leaving from V[i] is current_edge (it starts at V[i])
-            # But wait - in a circular list, next after current should wrap back to prev!
-            # Walking CCW around V[i]: prev_edge(dest) → current_edge(origin)
-            current_edge.prev_at_origin = prev_edge  # prev_edge ends at V[i]
-            current_edge.next_at_origin = prev_edge  # After current, we're back to prev
+        # Create GraphVertex wrappers for all DCEL vertices
+        for idx, dcel_vertex in enumerate(self.dcel.vertices):
+            graph_vertex = GraphVertex(dcel_vertex, self._next_vertex_id, idx)
+            self._next_vertex_id += 1
+            self.vertices.append(graph_vertex)
+            self._vertex_map[dcel_vertex] = graph_vertex
 
-            # At destination of current_edge (vertices[i+1]):
-            # Walking CCW around V[i+1]: current_edge(dest) → next_edge(origin)
-            current_edge.next_at_dest = next_edge  # next_edge starts at V[i+1]
-            current_edge.prev_at_dest = next_edge  # Before current (wrapping around), is next
+        # Create Edge wrappers for all DCEL half-edges
+        seen_edges = set()
+        for hedge in self.dcel.hedges:
+            # Only create one Edge per pair of half-edges
+            hedge_id = id(hedge)
+            twin_id = id(hedge.twin)
+            if twin_id not in seen_edges:
+                edge = Edge(hedge, self._next_edge_id, EdgeType.BOUNDARY, graph=self)
+                self._next_edge_id += 1
+                self.edges.append(edge)
+                self._edge_map[hedge] = edge
+                self._edge_map[hedge.twin] = edge
+                seen_edges.add(hedge_id)
+                seen_edges.add(twin_id)
 
-        # Create interior face (CCW traversal gives interior)
-        interior_face = Face(
-            face_id=self._next_face_id,
-            face_type=FaceType.INTERIOR
-        )
-        interior_face.boundary_edge = edges[0]
-        self._next_face_id += 1
-
-        # Assign left face to interior, right face to unbounded
-        for edge in edges:
-            edge.left_face = interior_face
-            edge.right_face = self.unbounded_face
-
-        self.faces.append(interior_face)
-
-        # Update unbounded face
-        if self.unbounded_face.boundary_edge is None:
-            self.unbounded_face.boundary_edge = edges[0]
+        # Rebuild faces after DCEL is built
+        self.rebuild_faces()
 
         return self
 
-    def add_diagonal(self, v1: GraphVertex, v2: GraphVertex) -> Edge:
+    def rebuild_dcel(self):
         """
-        Add a diagonal between two vertices, splitting a face.
-        Used in triangulation.
-
-        Returns:
-            The new edge connecting v1 to v2
+        Rebuild the entire DCEL structure from current vertices and edges.
+        This is needed after adding edges incrementally.
         """
-        edge = self.add_edge(v1, v2, EdgeType.DIAGONAL)
+        # Extract vertex coordinates
+        vertex_coords = []
+        vertex_map_old_to_new = {}
 
-        # TODO: Update face split information
-        # This requires finding which face is being split and creating two new faces
+        for i, v in enumerate(self.vertices):
+            vertex_coords.append((v.point[prim.X], v.point[prim.Y]))
+            vertex_map_old_to_new[v.dcel_index] = i
 
-        return edge
+        # Extract edges as index pairs
+        edge_pairs = []
+        seen_pairs = set()
+        for edge in self.edges:
+            # Get indices
+            v1_idx = vertex_map_old_to_new[self.vertices.index(edge.origin)]
+            v2_idx = vertex_map_old_to_new[self.vertices.index(edge.destination)]
 
-    def get_triangles(self) -> list[tuple[int, int, int]]:
+            # Add edge in canonical form (smaller index first)
+            pair = tuple(sorted([v1_idx, v2_idx]))
+            if pair not in seen_pairs:
+                edge_pairs.append((v1_idx, v2_idx))
+                seen_pairs.add(pair)
+
+        # Rebuild DCEL
+        self.dcel = Dcel()
+        self.dcel.build_dcel(vertex_coords, edge_pairs)
+
+        # Rebuild vertex mappings
+        self._vertex_map.clear()
+        for i, v in enumerate(self.vertices):
+            v.dcel_vertex = self.dcel.vertices[i]
+            v.dcel_index = i
+            self._vertex_map[v.dcel_vertex] = v
+
+        # Rebuild edge mappings
+        self._edge_map.clear()
+        self.edges.clear()
+        self._next_edge_id = 0
+
+        seen_edges = set()
+        for hedge in self.dcel.hedges:
+            hedge_id = id(hedge)
+            twin_id = id(hedge.twin)
+            if twin_id not in seen_edges:
+                edge = Edge(hedge, self._next_edge_id, EdgeType.INTERNAL, graph=self)
+                self._next_edge_id += 1
+                self.edges.append(edge)
+                self._edge_map[hedge] = edge
+                self._edge_map[hedge.twin] = edge
+                seen_edges.add(hedge_id)
+                seen_edges.add(twin_id)
+
+        # Rebuild faces
+        self.rebuild_faces()
+
+    def rebuild_faces(self):
         """
-        Extract all triangular faces from the planar graph.
+        Rebuild face list from DCEL.
+        """
+        self.faces = []
+        self._face_map = {}
+        self._next_face_id = 0
 
-        Returns:
-            List of triangles, where each triangle is a tuple of three vertex IDs
-            sorted in increasing order. Example: [(0, 1, 2), (0, 2, 3)]
+        # Iterate over DCEL faces
+        for dcel_face in self.dcel.faces:
+            face = Face(dcel_face, self._next_face_id, FaceType.INTERIOR)
+            self._next_face_id += 1
+            self.faces.append(face)
+            self._face_map[dcel_face] = face
+
+        # Determine unbounded face (largest area)
+        if self.faces:
+            self.unbounded_face = max(self.faces, key=lambda f: abs(f.area()))
+            self.unbounded_face.face_type = FaceType.UNBOUNDED
+
+    def triangulate(self) -> List[Tuple[int, int, int]]:
+        """
+        Triangulate all faces using ear clipping algorithm.
+        Returns list of triangles as (v0_id, v1_id, v2_id) tuples.
         """
         triangles = []
 
         for face in self.faces:
-            if face.face_type != FaceType.INTERIOR:
-                continue
-
-            vertices = face.get_boundary_vertices()
-
-            # Check if this is a triangle (3 vertices)
-            if len(vertices) == 3:
-                tri = tuple(sorted([vertices[0].id, vertices[1].id, vertices[2].id]))
-                triangles.append(tri)
-
-        return triangles
-
-    def triangulate(self) -> list[tuple[int, int, int]]:
-        """
-        Triangulate the planar graph using ear clipping.
-
-        This modifies the graph by adding diagonals and splitting faces.
-        Maintains proper Euler characteristic: V - E + F = 2
-
-        Returns:
-            List of triangles, where each triangle is a tuple of three vertex IDs
-            sorted in increasing order. Example: [(0, 1, 2), (0, 2, 3)]
-        """
-        # First check if already triangulated (all interior faces are triangles)
-        interior_faces = [f for f in self.faces if f.face_type == FaceType.INTERIOR]
-
-        if not interior_faces:
-            return []
-
-        # Check if all interior faces are already triangles
-        all_triangular = True
-        for face in interior_faces:
-            verts = face.get_boundary_vertices()
-            if len(verts) != 3:
-                all_triangular = False
-                break
-
-        if all_triangular:
-            # Already triangulated - return the triangles
-            return self.get_triangles()
-
-        # Not fully triangulated - find faces that need triangulation
-        face = None
-        for f in interior_faces:
-            verts = f.get_boundary_vertices()
-            if len(verts) > 3:
-                face = f
-                break
-
-        if face is None:
-            # All faces are triangular
-            return self.get_triangles()
-
-        vertices_list = face.get_boundary_vertices()
-        n = len(vertices_list)
-
-        if n < 3:
-            return []
-
-        # Check winding order and reverse if CW (ear clipping requires CCW)
-        # Compute signed area: positive = CW, negative = CCW
-        signed_area = 0.0
-        for i in range(n):
-            j = (i + 1) % n
-            signed_area += (vertices_list[j].point[prim.X] - vertices_list[i].point[prim.X]) * \
-                          (vertices_list[j].point[prim.Y] + vertices_list[i].point[prim.Y])
-
-        # If CW winding (positive area), reverse the order
-        if signed_area > 0:
-            vertices_list = list(reversed(vertices_list))
-
-        # Create vertex mapping
-        vertex_map = {i: gv for i, gv in enumerate(vertices_list)}
-
-        # Convert to primitives for triangulation algorithm
-        old_vertices = []
-        for i, gv in enumerate(vertices_list):
-            v = prim.Vertex(i, gv.point)
-            old_vertices.append(v)
-
-        # Link them circularly
-        prim.link_vertices_circular(old_vertices)
-
-        # Run ear clipping algorithm
-        from polygon import Triangulate
-        diagonals = Triangulate()
-
-        # Add diagonals to graph structure
-        added_diagonals = []
-        if diagonals:
-            for v1_idx, v2_idx in diagonals:
-                if v1_idx < len(vertices_list) and v2_idx < len(vertices_list):
-                    gv1 = vertex_map[v1_idx]
-                    gv2 = vertex_map[v2_idx]
-                    edge = self.add_diagonal(gv1, gv2)
-                    added_diagonals.append((edge, gv1, gv2))
-
-            # Rebuild faces after adding diagonals
-            self.rebuild_faces()
-
-            # Return all triangles
-            return self.get_triangles()
-
-        return self.get_triangles()
-
-    def _split_faces_for_triangulation(self, original_face: Face,
-                                       diagonals: list[tuple[Edge, GraphVertex, GraphVertex]],
-                                       vertex_map: dict[int, GraphVertex]) -> list[tuple[int, int, int]]:
-        """
-        Split faces along the added diagonals to create triangular faces.
-
-        Returns:
-            List of triangles as tuples of vertex IDs.
-        """
-        # Remove the original face
-        self.faces.remove(original_face)
-
-        boundary_vertices = original_face.get_boundary_vertices()
-        n = len(boundary_vertices)
-
-        # For a triangulation: n vertices, n boundary edges + (n-3) diagonals
-        # Results in (n-2) triangular faces
-
-        triangles = []
-
-        if n >= 3:
-            base_vertex = boundary_vertices[0]
-
-            # Get all edges (boundary + diagonals)
-            boundary_edges = original_face.get_boundary_edges()
-            edge_map = {}
-
-            for edge in boundary_edges:
-                edge_map[(edge.origin, edge.destination)] = edge
-                edge_map[(edge.destination, edge.origin)] = edge
-
-            for edge, gv1, gv2 in diagonals:
-                edge_map[(gv1, gv2)] = edge
-                edge_map[(gv2, gv1)] = edge
-
-            # Create triangular faces using fan triangulation
-            for i in range(1, n - 1):
-                v1 = boundary_vertices[i]
-                v2 = boundary_vertices[i + 1]
-
-                # Create triangle: base_vertex - v1 - v2
-                tri_edges = []
-
-                # Find edges for this triangle
-                if (base_vertex, v1) in edge_map:
-                    tri_edges.append(edge_map[(base_vertex, v1)])
-                if (v1, v2) in edge_map:
-                    tri_edges.append(edge_map[(v1, v2)])
-                if (v2, base_vertex) in edge_map:
-                    tri_edges.append(edge_map[(v2, base_vertex)])
-
-                # Create face if we have edges
-                if len(tri_edges) >= 1:
-                    tri_face = Face(
-                        face_id=self._next_face_id,
-                        face_type=FaceType.INTERIOR
-                    )
-                    tri_face.boundary_edge = tri_edges[0]
-                    self._next_face_id += 1
-
-                    # Assign face to edges
-                    for edge in tri_edges:
-                        if edge.left_face is None:
-                            edge.left_face = tri_face
-                        elif edge.right_face is None:
-                            edge.right_face = tri_face
-
-                    self.faces.append(tri_face)
-
-                    # Add triangle to result
-                    tri_tuple = tuple(sorted([base_vertex.id, v1.id, v2.id]))
-                    triangles.append(tri_tuple)
-
-        return triangles
-
-    def get_vertex_by_id(self, vertex_id: int) -> Optional[GraphVertex]:
-        """Find vertex by its ID"""
-        for vertex in self.vertices:
-            if vertex.id == vertex_id:
-                return vertex
-        return None
-
-    def get_vertex_by_coords(self, x: float, y: float) -> Optional[GraphVertex]:
-        """Find vertex at given coordinates"""
-        return self._vertex_map.get((x, y))
-
-    def get_coords_by_vertex_id(self, vertex_id: int) -> Optional[tuple[float, float]]:
-        """
-        Get coordinates for a vertex given its ID.
-
-        Args:
-            vertex_id: The ID of the vertex
-
-        Returns:
-            A tuple (x, y) of the vertex coordinates, or None if vertex not found
-        """
-        vertex = self.get_vertex_by_id(vertex_id)
-        if vertex is None:
-            return None
-        return (vertex.point[prim.X], vertex.point[prim.Y])
-
-    def get_incident_edges_for_vertex(self, vertex: GraphVertex) -> list[Edge]:
-        """
-        Get all edges incident to a vertex.
-        This is a convenience method that delegates to vertex.get_incident_edges()
-        """
-        return vertex.get_incident_edges()
-
-    def find_face_containing_point(self, x: float, y: float) -> Optional[Face]:
-        """
-        Point location: find which face contains the given point.
-        Uses point-in-polygon test.
-        """
-        query_point = prim.Point(x, y)
-
-        for face in self.faces:
-            if face.face_type == FaceType.UNBOUNDED:
+            if face == self.unbounded_face:
                 continue
 
             vertices = face.get_boundary_vertices()
             if len(vertices) < 3:
+                continue  # Skip degenerate faces
+
+            if len(vertices) == 3:
+                # Already a triangle
+                v_ids = [self._vertex_map[v].id if v in self._vertex_map else v.id for v in vertices]
+                triangles.append(tuple(v_ids))
                 continue
 
-            if self._point_in_face(query_point, face):
-                return face
+            # Ear clipping for polygons with 4+ vertices
+            face_triangles = self._triangulate_face(vertices)
+            triangles.extend(face_triangles)
 
-        return self.unbounded_face
+        return triangles
 
-    def _point_in_face(self, point: prim.Point, face: Face) -> bool:
-        """Check if point is inside the given face using ray casting"""
-        vertices = face.get_boundary_vertices()
-        n = len(vertices)
+    def _triangulate_face(self, vertices: List) -> List[Tuple[int, int, int]]:
+        """
+        Triangulate a single face using ear clipping.
+        """
+        triangles = []
+
+        # Convert to list of vertex indices
+        vert_list = list(vertices)
+        n = len(vert_list)
 
         if n < 3:
+            return triangles
+
+        # Ear clipping algorithm
+        attempts = 0
+        max_attempts = n * n
+
+        while len(vert_list) > 3 and attempts < max_attempts:
+            attempts += 1
+            ear_found = False
+
+            for i in range(len(vert_list)):
+                if self._is_ear(vert_list, i):
+                    # Found an ear, clip it
+                    prev_idx = (i - 1) % len(vert_list)
+                    next_idx = (i + 1) % len(vert_list)
+
+                    v0 = vert_list[prev_idx]
+                    v1 = vert_list[i]
+                    v2 = vert_list[next_idx]
+
+                    # Get vertex IDs
+                    if v0 in self._vertex_map:
+                        v0_id = self._vertex_map[v0].id
+                    elif hasattr(v0, 'id'):
+                        v0_id = v0.id
+                    else:
+                        v0_id = id(v0)
+
+                    if v1 in self._vertex_map:
+                        v1_id = self._vertex_map[v1].id
+                    elif hasattr(v1, 'id'):
+                        v1_id = v1.id
+                    else:
+                        v1_id = id(v1)
+
+                    if v2 in self._vertex_map:
+                        v2_id = self._vertex_map[v2].id
+                    elif hasattr(v2, 'id'):
+                        v2_id = v2.id
+                    else:
+                        v2_id = id(v2)
+
+                    triangles.append((v0_id, v1_id, v2_id))
+
+                    # Remove the ear vertex
+                    vert_list.pop(i)
+                    ear_found = True
+                    break
+
+            if not ear_found:
+                break
+
+        # Add final triangle
+        if len(vert_list) == 3:
+            v_ids = []
+            for v in vert_list:
+                if v in self._vertex_map:
+                    v_ids.append(self._vertex_map[v].id)
+                elif hasattr(v, 'id'):
+                    v_ids.append(v.id)
+                else:
+                    v_ids.append(id(v))
+            triangles.append(tuple(v_ids))
+
+        return triangles
+
+    def _is_ear(self, vertices: List, i: int) -> bool:
+        """Check if vertex i is an ear of the polygon"""
+        n = len(vertices)
+        prev_idx = (i - 1) % n
+        next_idx = (i + 1) % n
+
+        v_prev = vertices[prev_idx]
+        v_curr = vertices[i]
+        v_next = vertices[next_idx]
+
+        # Get coordinates
+        def get_coords(v):
+            if hasattr(v, 'x'):
+                return v.x, v.y
+            elif hasattr(v, 'point'):
+                return v.point[prim.X], v.point[prim.Y]
+            else:
+                return v[0], v[1]
+
+        x0, y0 = get_coords(v_prev)
+        x1, y1 = get_coords(v_curr)
+        x2, y2 = get_coords(v_next)
+
+        # Check if triangle is oriented correctly (CCW)
+        cross = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
+        if cross <= 0:
             return False
 
-        rcross = 0  # Right crossings
-        lcross = 0  # Left crossings
+        # Check if any other vertex is inside this triangle
+        for j in range(n):
+            if j == prev_idx or j == i or j == next_idx:
+                continue
 
-        for i in range(n):
-            i1 = (i - 1) % n
-            v_i = vertices[i].point
-            v_i1 = vertices[i1].point
+            v_test = vertices[j]
+            x, y = get_coords(v_test)
 
-            # Check if edge straddles horizontal ray through point
-            if (v_i[prim.Y] > point[prim.Y]) != (v_i1[prim.Y] > point[prim.Y]):
-                # Compute x intersection
-                x = (v_i[prim.X] - v_i1[prim.X]) * (point[prim.Y] - v_i1[prim.Y]) / \
-                    (v_i[prim.Y] - v_i1[prim.Y]) + v_i1[prim.X]
-
-                if x > point[prim.X]:
-                    rcross += 1
-                if x < point[prim.X]:
-                    lcross += 1
-
-        # Inside if odd number of crossings
-        return (rcross % 2) == 1
-
-    def euler_characteristic(self) -> int:
-        """
-        Compute Euler characteristic: V - E + F
-        For a connected planar graph, this should equal 2.
-        """
-        V = len(self.vertices)
-        E = len(self.edges)
-        F = len(self.faces)
-
-        return V - E + F
-
-    def rebuild_faces(self):
-        """
-        Rebuild all faces from the edge structure.
-
-        This traverses the planar graph and identifies all face cycles.
-        Use this after adding many edges to rebuild the face structure.
-        """
-        # Clear all existing faces except unbounded
-        self.faces = [self.unbounded_face]
-        self._next_face_id = 1
-
-        # Clear all face assignments on edges
-        for edge in self.edges:
-            edge.left_face = None
-            edge.right_face = None
-
-        # Track which edge directions we've visited
-        visited = set()
-
-        # For each edge direction, try to walk a face cycle
-        for edge in self.edges:
-            # Try both directions of the edge
-            for direction in ['forward', 'backward']:
-                if direction == 'forward':
-                    edge_dir = (edge.id, 'left')
-                else:
-                    edge_dir = (edge.id, 'right')
-
-                if edge_dir in visited:
-                    continue
-
-                # Walk the face cycle
-                face_edges = []
-                current_edge = edge
-                current_side = 'left' if direction == 'forward' else 'right'
-
-                start_edge_id = edge.id
-                start_side = current_side
-
-                while True:
-                    # Mark this edge direction as visited
-                    visited.add((current_edge.id, current_side))
-                    face_edges.append((current_edge, current_side))
-
-                    # Move to next edge in face cycle
-                    if current_side == 'left':
-                        # We're on the left side going origin->dest
-                        # Next edge is at destination
-                        next_vertex = current_edge.destination
-                        # Get the next edge CCW around destination
-                        next_edge = current_edge.next_at_dest
-                        # Determine which side of next_edge we're on
-                        if next_edge.origin == next_vertex:
-                            current_side = 'left'
-                        else:
-                            current_side = 'right'
-                        current_edge = next_edge
-                    else:
-                        # We're on the right side going dest->origin
-                        # Next edge is at origin
-                        next_vertex = current_edge.origin
-                        # Get the next edge CCW around origin
-                        next_edge = current_edge.prev_at_origin
-                        # Determine which side of next_edge we're on
-                        if next_edge.destination == next_vertex:
-                            current_side = 'right'
-                        else:
-                            current_side = 'left'
-                        current_edge = next_edge
-
-                    # Check if we've completed the cycle
-                    if current_edge.id == start_edge_id and current_side == start_side:
-                        break
-
-                    # Safety check for infinite loops
-                    if len(face_edges) > len(self.edges) * 2:
-                        break
-
-                # Create a face for this cycle
-                if len(face_edges) > 0:
-                    # Determine if this is interior or exterior
-                    # Compute signed area - positive = CCW = interior
-                    vertices = []
-                    for e, side in face_edges:
-                        if side == 'left':
-                            vertices.append(e.origin)
-                        else:
-                            vertices.append(e.destination)
-
-                    # Remove duplicates while preserving order
-                    seen = set()
-                    unique_verts = []
-                    for v in vertices:
-                        if v.id not in seen:
-                            seen.add(v.id)
-                            unique_verts.append(v)
-
-                    if len(unique_verts) >= 3:
-                        # Compute signed area
-                        area = 0.0
-                        n = len(unique_verts)
-                        for i in range(n):
-                            j = (i + 1) % n
-                            area += unique_verts[i].point[prim.X] * unique_verts[j].point[prim.Y]
-                            area -= unique_verts[j].point[prim.X] * unique_verts[i].point[prim.Y]
-                        area /= 2.0
-
-                        # Create face
-                        if abs(area) > 0.01:  # Not degenerate
-                            face_type = FaceType.INTERIOR if area > 0 else FaceType.EXTERIOR
-                            new_face = Face(self._next_face_id, face_type)
-                            new_face.boundary_edge = face_edges[0][0]
-                            self._next_face_id += 1
-
-                            # Assign face to all edges in the cycle
-                            for e, side in face_edges:
-                                if side == 'left':
-                                    e.left_face = new_face
-                                else:
-                                    e.right_face = new_face
-
-                            self.faces.append(new_face)
-
-        # Assign unbounded face to any edges without faces
-        for edge in self.edges:
-            if edge.left_face is None:
-                edge.left_face = self.unbounded_face
-            if edge.right_face is None:
-                edge.right_face = self.unbounded_face
-
-    def validate(self) -> bool:
-        """
-        Validate the planar graph structure.
-
-        Checks:
-        - Winged-edge pointer consistency
-        - Face assignments
-        - Vertex incident edge references
-        """
-        # Check winged-edge pointers
-        for edge in self.edges:
-            # Check that adjacent edges reference this edge back
-            if edge.next_at_origin:
-                next_edge = edge.next_at_origin
-                if next_edge.origin == edge.origin:
-                    if next_edge.prev_at_origin != edge:
-                        print(f"Error: next_at_origin pointer inconsistency for {edge}")
-                        return False
-                elif next_edge.destination == edge.origin:
-                    if next_edge.prev_at_dest != edge:
-                        print(f"Error: next_at_origin pointer inconsistency for {edge}")
-                        return False
-
-            # Similar checks for other pointers...
-            # (Simplified for brevity)
-
-        # Check that each vertex has a valid incident edge
-        for vertex in self.vertices:
-            if vertex.degree > 0 and vertex.incident_edge is None:
-                print(f"Error: Vertex {vertex} has degree {vertex.degree} but no incident edge")
+            if self._point_in_triangle(x, y, x0, y0, x1, y1, x2, y2):
                 return False
 
         return True
 
-    def __repr__(self):
-        return (f"PlanarGraph(V={len(self.vertices)}, "
-                f"E={len(self.edges)}, F={len(self.faces)})")
+    def _point_in_triangle(self, px: float, py: float,
+                           x0: float, y0: float,
+                           x1: float, y1: float,
+                           x2: float, y2: float) -> bool:
+        """Check if point (px, py) is inside triangle (x0,y0), (x1,y1), (x2,y2)"""
+        def sign(p1x, p1y, p2x, p2y, p3x, p3y):
+            return (p1x - p3x) * (p2y - p3y) - (p2x - p3x) * (p1y - p3y)
 
-    def compute_convex_hull(self) -> list[GraphVertex]:
+        d1 = sign(px, py, x0, y0, x1, y1)
+        d2 = sign(px, py, x1, y1, x2, y2)
+        d3 = sign(px, py, x2, y2, x0, y0)
+
+        has_neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
+        has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
+
+        return not (has_neg and has_pos)
+
+    def get_triangles(self) -> List[Tuple[int, int, int]]:
         """
-        Compute the convex hull of all vertices using the giftwrapping (Jarvis march) algorithm.
+        Get all existing triangular faces (faces with exactly 3 vertices).
+        """
+        triangles = []
+        for face in self.faces:
+            if face == self.unbounded_face:
+                continue
 
-        Uses only the Left test from primitives to determine point orientation.
-        The algorithm wraps around the point set, at each step finding the point that
-        makes the rightmost turn (most counterclockwise) from the current edge.
+            vertices = face.get_boundary_vertices()
+            if len(vertices) == 3:
+                v_ids = []
+                for v in vertices:
+                    if v in self._vertex_map:
+                        v_ids.append(self._vertex_map[v].id)
+                    elif hasattr(v, 'id'):
+                        v_ids.append(v.id)
+                    else:
+                        v_ids.append(id(v))
+                triangles.append(tuple(v_ids))
 
-        Returns:
-            List of vertices forming the convex hull in counter-clockwise order.
-            Returns empty list if there are fewer than 3 vertices.
+        return triangles
+
+    def get_vertex_by_id(self, vertex_id: int) -> Optional[GraphVertex]:
+        """Get vertex by its ID"""
+        for v in self.vertices:
+            if v.id == vertex_id:
+                return v
+        return None
+
+    def get_coords_by_vertex_id(self, vertex_id: int) -> Optional[Tuple[float, float]]:
+        """Get coordinates of a vertex by its ID"""
+        v = self.get_vertex_by_id(vertex_id)
+        if v:
+            return (v.point[prim.X], v.point[prim.Y])
+        return None
+
+    def euler_characteristic(self) -> int:
+        """Compute Euler characteristic: V - E + F"""
+        return len(self.vertices) - len(self.edges) + len(self.faces)
+
+    def compute_convex_hull(self) -> List[GraphVertex]:
+        """
+        Compute convex hull of all vertices using Gift Wrapping algorithm.
+        Returns vertices in CCW order.
         """
         if len(self.vertices) < 3:
-            return []
+            return list(self.vertices)
 
-        # Step 1: Find the starting point (lowest y, then leftmost)
-        start = min(self.vertices, key=lambda v: (v.point[prim.Y], v.point[prim.X]))
+        # Find leftmost point
+        leftmost = min(self.vertices, key=lambda v: (v.point[prim.X], v.point[prim.Y]))
 
         hull = []
-        current = start
+        current = leftmost
 
         while True:
             hull.append(current)
 
-            # Find the next point on the hull
-            # Start by assuming the next candidate is the first point that isn't current
-            next_point = None
-            for v in self.vertices:
-                if v != current:
-                    next_point = v
-                    break
+            # Find the most counter-clockwise point from current
+            next_vertex = self.vertices[0]
 
-            # Find the point that is "most counterclockwise" from current
-            # For CCW hull: we want the point such that all other points are to the RIGHT
-            # of the line current->next_point (or equivalently, next_point is the leftmost)
             for candidate in self.vertices:
-                if candidate == current or candidate == next_point:
+                if candidate == current:
                     continue
 
-                # Check if candidate is to the RIGHT of the line current->next_point
-                # If so, next_point was too far left, so replace it with candidate
-                # Equivalently: if next_point is to the LEFT of current->candidate, replace next_point
-                if prim.Left(current.point, candidate.point, next_point.point):
-                    # next_point is to the left of current->candidate
-                    # so candidate is more to the right (more counterclockwise for hull)
-                    next_point = candidate
-                elif prim.Collinear(current.point, next_point.point, candidate.point):
-                    # If collinear, choose the one that is farther away
-                    dx_next = next_point.point[prim.X] - current.point[prim.X]
-                    dy_next = next_point.point[prim.Y] - current.point[prim.Y]
-                    dist_next_sq = dx_next * dx_next + dy_next * dy_next
+                # Cross product to determine orientation
+                x1 = next_vertex.point[prim.X] - current.point[prim.X]
+                y1 = next_vertex.point[prim.Y] - current.point[prim.Y]
+                x2 = candidate.point[prim.X] - current.point[prim.X]
+                y2 = candidate.point[prim.Y] - current.point[prim.Y]
 
-                    dx_cand = candidate.point[prim.X] - current.point[prim.X]
-                    dy_cand = candidate.point[prim.Y] - current.point[prim.Y]
-                    dist_cand_sq = dx_cand * dx_cand + dy_cand * dy_cand
+                cross = x1 * y2 - y1 * x2
 
-                    if dist_cand_sq > dist_next_sq:
-                        next_point = candidate
+                if next_vertex == current or cross < 0:
+                    next_vertex = candidate
 
-            # Move to the next point
-            current = next_point
+            current = next_vertex
 
-            # If we've wrapped around to the start, we're done
-            if current == start:
-                break
-
-            # Safety check to prevent infinite loops
-            if len(hull) > len(self.vertices):
+            # Stop when we return to the start
+            if current == leftmost:
                 break
 
         return hull
 
     def print_structure(self):
-        """Print detailed structure information"""
+        """Print the graph structure for debugging"""
         print(self)
         print(f"Euler characteristic: {self.euler_characteristic()}")
-        print(f"\nVertices ({len(self.vertices)}):")
+        print()
+
+        print(f"Vertices ({len(self.vertices)}):")
         for v in self.vertices:
-            neighbors = [n.id for n in v.get_neighbors()]
-            print(f"  {v} degree={v.degree} neighbors={neighbors}")
+            neighbors = v.get_neighbors()
+            neighbor_ids = [self._vertex_map[n].id if n in self._vertex_map else id(n) for n in neighbors]
+            print(f"  {v} degree={v.degree} neighbors={neighbor_ids}")
 
         print(f"\nFaces ({len(self.faces)}):")
         for f in self.faces:
-            vertices = [v.id for v in f.get_boundary_vertices()]
-            area = f.area()
-            print(f"  {f} vertices={vertices} area={area:.2f}")
+            verts = f.get_boundary_vertices()
+            vert_ids = [self._vertex_map[v].id if v in self._vertex_map else id(v) for v in verts]
+            print(f"  {f} vertices={vert_ids} area={f.area():.2f}")
+
+    def __repr__(self):
+        return f"PlanarGraph(V={len(self.vertices)}, E={len(self.edges)}, F={len(self.faces)})"

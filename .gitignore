@@ -10,6 +10,7 @@ build/
 venv/
 env/
 .venv/
+venv311/
 
 # IDE
 .vscode/
