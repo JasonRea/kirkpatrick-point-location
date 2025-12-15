@@ -45,7 +45,6 @@ def BoundTriangle(P: pg.PlanarGraph):
         prim.Point(max_x + padding, min_y - padding),
         prim.Point((min_x + max_x) / 2, max_y + padding * 2)
     ]
-    print(bounding_points)
 
     convex_hull = P.compute_convex_hull()
 
@@ -77,7 +76,8 @@ def BoundTriangle(P: pg.PlanarGraph):
 
     leftmost = min(convex_hull, key=lambda v: v.point[X])
     rightmost = max(convex_hull, key=lambda v: v.point[X])
-    topmost = max(convex_hull, key=lambda v: v.point[Y])
+    # Tiebreaker: if multiple vertices have same max Y, choose the one with greatest X
+    topmost = max(convex_hull, key=lambda v: (v.point[Y], v.point[X]))
     chull_vertices = [leftmost, rightmost, topmost]
 
     for bv, cv in zip(bounding_vertices, chull_vertices):
@@ -86,27 +86,26 @@ def BoundTriangle(P: pg.PlanarGraph):
     P.rebuild_dcel()
 
 def BuildDAG(P: pg.PlanarGraph):
-    #TODO evaluate and fix ConstructNestedPolytopeHierarchy, BuildDag 
-    #There is an issue with how we construct the nested polytope hierarchy
             
     BoundTriangle(P)
     P.triangulate()
 
     hierarchy = ConstructNestedPolytopeHierarchy(P)
 
-    dag_nodes: list[DAGNode] = []
+    previous_layer: list[DAGNode] = []
+    current_layer: list[DAGNode] = []
 
     for pslg in hierarchy:
         triangles = pslg.triangulate()
-        print(f"Triangles: {triangles}")
+        current_layer.clear()
         
         for triangle in triangles:
             #initialize new nodes in current level of hierarchy
             new_node = DAGNode(triangle)
-            dag_nodes.append(new_node)
+            current_layer.append(new_node)
 
             #link nodes
-            for node in dag_nodes:
+            for node in previous_layer:
 
                 #turn these tuples into polygons
                 tri_one = node.polygonalize(hierarchy[0]) # use P_0 for coordinate lookup
@@ -115,4 +114,6 @@ def BuildDAG(P: pg.PlanarGraph):
                 if TriTriInt(tri_one, tri_two):
                     new_node.add_child(node)
 
-    return dag_nodes[-1] # return head of DAG
+        previous_layer = current_layer.copy()
+
+    return previous_layer[-1] # return head of DAG

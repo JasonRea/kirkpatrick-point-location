@@ -798,10 +798,14 @@ class PlanarGraph:
         # Build new DCEL
         new_graph.dcel.build_dcel(vertex_coords, edge_pairs)
 
-        # Create vertex wrappers
+        # Create vertex wrappers, preserving original vertex IDs
         for idx, dcel_vertex in enumerate(new_graph.dcel.vertices):
-            graph_vertex = GraphVertex(dcel_vertex, new_graph._next_vertex_id, idx, graph=new_graph)
-            new_graph._next_vertex_id += 1
+            # Use the original vertex ID to maintain consistency
+            original_vertex = self.vertices[idx]
+            graph_vertex = GraphVertex(dcel_vertex, original_vertex.id, idx, graph=new_graph)
+            # Update _next_vertex_id to be higher than any existing ID
+            if original_vertex.id >= new_graph._next_vertex_id:
+                new_graph._next_vertex_id = original_vertex.id + 1
             new_graph.vertices.append(graph_vertex)
             new_graph._vertex_map[dcel_vertex] = graph_vertex
 
