@@ -28,3 +28,6 @@ venv311/
 .coverage
 htmlcov/
 test_*
+
+# Manim
+media/
