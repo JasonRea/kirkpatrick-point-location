@@ -40,11 +40,12 @@ class GraphVertex:
     """
     Wrapper for pydcel Vertex with additional metadata.
     """
-    def __init__(self, dcel_vertex: Vertex, vertex_id: int, dcel_index: int):
+    def __init__(self, dcel_vertex: Vertex, vertex_id: int, dcel_index: int, graph=None):
         self.dcel_vertex = dcel_vertex
         self.id = vertex_id
         self.dcel_index = dcel_index  # Index in DCEL vertices list
         self.point = prim.Point(dcel_vertex.x, dcel_vertex.y)
+        self._graph = graph  # Reference to PlanarGraph for edge lookups
 
     @property
     def degree(self) -> int:
@@ -58,10 +59,23 @@ class GraphVertex:
         hedges = self.dcel_vertex.hedgelist
         return hedges[0] if hedges else None
 
+    # NOTE we are not retrieving incident edges correctly
     def get_incident_edges(self) -> List['Edge']:
         """Get all edges incident to this vertex"""
-        # pydcel has hedgelist attribute
-        return list(self.dcel_vertex.hedgelist)
+        # pydcel has hedgelist attribute - but we need to return Edge wrappers
+        incident_edges = []
+        for hedge in self.dcel_vertex.hedgelist:
+            # Look up the Edge wrapper for this half-edge
+            # We need to access the graph's edge list
+            # For now, we'll need to search through edges
+            # This is not ideal but necessary without storing back-references
+            if hasattr(self, '_graph') and self._graph:
+                for edge in self._graph.edges:
+                    if edge.half_edge == hedge or edge.half_edge.twin == hedge:
+                        if edge not in incident_edges:
+                            incident_edges.append(edge)
+                        break
+        return incident_edges
 
     def get_neighbors(self) -> List['GraphVertex']:
         """Get all neighboring vertices"""
@@ -259,7 +273,7 @@ class PlanarGraph:
 
         dcel_vertex = self.dcel.add_vertex(x, y)
         dcel_index = len(self.dcel.vertices) - 1  # Index of the vertex just added
-        graph_vertex = GraphVertex(dcel_vertex, self._next_vertex_id, dcel_index)
+        graph_vertex = GraphVertex(dcel_vertex, self._next_vertex_id, dcel_index, graph=self)
         self._next_vertex_id += 1
 
         self.vertices.append(graph_vertex)
@@ -283,6 +297,52 @@ class PlanarGraph:
 
         return edge
 
+    def remove_vertex(self, vertex: GraphVertex) -> None:
+        """
+        Remove a vertex from the graph.
+
+        This removes the vertex and all edges incident to it, then rebuilds
+        the DCEL to update the face structure.
+
+        Args:
+            vertex: The GraphVertex to remove (can be passed by vertex object or vertex ID)
+        """
+        # Handle both GraphVertex and vertex ID
+        if isinstance(vertex, int):
+            # Find vertex by ID
+            vertex_to_remove = None
+            for v in self.vertices:
+                if v.id == vertex:
+                    vertex_to_remove = v
+                    break
+            if vertex_to_remove is None:
+                raise ValueError(f"Vertex with ID {vertex} not found")
+            vertex = vertex_to_remove
+
+        # Remove all edges incident to this vertex
+        edges_to_remove = []
+        for edge in self.edges:
+            if edge.origin == vertex or edge.destination == vertex:
+                edges_to_remove.append(edge)
+
+        for edge in edges_to_remove:
+            self.edges.remove(edge)
+            # Remove from edge map
+            if edge.half_edge in self._edge_map:
+                del self._edge_map[edge.half_edge]
+            if edge.half_edge.twin in self._edge_map:
+                del self._edge_map[edge.half_edge.twin]
+
+        # Remove vertex from vertex list
+        self.vertices.remove(vertex)
+
+        # Remove from vertex map
+        if vertex.dcel_vertex in self._vertex_map:
+            del self._vertex_map[vertex.dcel_vertex]
+
+        # Rebuild DCEL to update face structure
+        self.rebuild_dcel()
+
     def from_polygon(self, points: List[Tuple[float, float]]) -> 'PlanarGraph':
         """
         Create a planar graph from a polygon (list of points).
@@ -301,7 +361,7 @@ class PlanarGraph:
 
         # Create GraphVertex wrappers for all DCEL vertices
         for idx, dcel_vertex in enumerate(self.dcel.vertices):
-            graph_vertex = GraphVertex(dcel_vertex, self._next_vertex_id, idx)
+            graph_vertex = GraphVertex(dcel_vertex, self._next_vertex_id, idx, graph=self)
             self._next_vertex_id += 1
             self.vertices.append(graph_vertex)
             self._vertex_map[dcel_vertex] = graph_vertex
@@ -343,9 +403,9 @@ class PlanarGraph:
         edge_pairs = []
         seen_pairs = set()
         for edge in self.edges:
-            # Get indices
-            v1_idx = vertex_map_old_to_new[self.vertices.index(edge.origin)]
-            v2_idx = vertex_map_old_to_new[self.vertices.index(edge.destination)]
+            # Get indices - find position in current vertices list
+            v1_idx = self.vertices.index(edge.origin)
+            v2_idx = self.vertices.index(edge.destination)
 
             # Add edge in canonical form (smaller index first)
             pair = tuple(sorted([v1_idx, v2_idx]))
@@ -362,6 +422,7 @@ class PlanarGraph:
         for i, v in enumerate(self.vertices):
             v.dcel_vertex = self.dcel.vertices[i]
             v.dcel_index = i
+            v._graph = self  # Ensure graph reference is maintained
             self._vertex_map[v.dcel_vertex] = v
 
         # Rebuild edge mappings
@@ -739,7 +800,7 @@ class PlanarGraph:
 
         # Create vertex wrappers
         for idx, dcel_vertex in enumerate(new_graph.dcel.vertices):
-            graph_vertex = GraphVertex(dcel_vertex, new_graph._next_vertex_id, idx)
+            graph_vertex = GraphVertex(dcel_vertex, new_graph._next_vertex_id, idx, graph=new_graph)
             new_graph._next_vertex_id += 1
             new_graph.vertices.append(graph_vertex)
             new_graph._vertex_map[dcel_vertex] = graph_vertex

@@ -198,16 +198,20 @@ def InPoly1(q: prim.Point, P: poly.Polygon, n: int):
     else:
         return 'o'
 
+# NOTE we are not retrieving the incident edges correctly
+
 def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
     I = set()
     marked_verteces = set()
 
     # mark bounding box (last 3 vertices) only if we have more than 3 vertices
     # For Kirkpatrick's algorithm, the bounding triangle should not be in the independent set
+    # We should NEVER be able to remove the vertices of the bounding triangle
     if len(G.vertices) > 3:
         marked_verteces.add(G.vertices[-1])
         marked_verteces.add(G.vertices[-2])
         marked_verteces.add(G.vertices[-3])
+        print(f"Vertices of G: {G.vertices}")
 
     for vertex in G.vertices:
         if vertex.degree >= 9:
@@ -222,8 +226,17 @@ def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
                 found_vertex = True
                 marked_verteces.add(vertex)
                 for edge in vertex.get_incident_edges():
+                    print(vertex.get_incident_edges)
                     # Get the other endpoint of the edge
-                    neighbor = edge.destination if edge.origin == vertex else edge.origin
+                    # Compare by ID to handle potential type mismatches
+                    if hasattr(edge.origin, 'id') and hasattr(vertex, 'id'):
+                        if edge.origin.id == vertex.id:
+                            neighbor = edge.destination
+                        else:
+                            neighbor = edge.origin
+                    else:
+                        neighbor = edge.destination if edge.origin == vertex else edge.origin
+                    print(f"vertex: {vertex} edge.origin: {edge.origin} edge.dest: {edge.destination} neighbor: {neighbor}")
                     marked_verteces.add(neighbor)
                 I.add(vertex)
                 break  # Only add one vertex per iteration
