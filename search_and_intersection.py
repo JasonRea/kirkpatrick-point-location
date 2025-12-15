@@ -56,13 +56,20 @@ def SegSegInt(a: prim.Point, b: prim.Point, c: prim.Point, d: prim.Point, p: pri
 
 
 def TriTriInt(t1: poly.Polygon, t2: poly.Polygon):
-    for point in t2.points:
-        if inTri2D(t1.points, point) == 'f':
-            return True
+    try:
+        for point in t2.points:
+            if inTri2D(t1.points, point) == 'f':
+                return True
 
-    for point in t1.points:
-        if inTri2D(t2.points, point) == 'f':
-            return True
+        for point in t1.points:
+            if inTri2D(t2.points, point) == 'f':
+                return True
+    except RuntimeError as e:
+        # Handle degenerate triangles - treat as no intersection
+        print(f"Warning: Degenerate triangle detected in TriTriInt")
+        print(f"  t1.points: {t1.points}")
+        print(f"  t2.points: {t2.points}")
+        return False
         
     a, b, c = t1.points
     d, e, f = t2.points
@@ -198,20 +205,28 @@ def InPoly1(q: prim.Point, P: poly.Polygon, n: int):
     else:
         return 'o'
 
-# NOTE we are not retrieving the incident edges correctly
+# NOTE fix construct independent set, refer to o'rourke
+# Check ordering of bounding triangle points
 
 def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
     I = set()
     marked_verteces = set()
 
-    # mark bounding box (last 3 vertices) only if we have more than 3 vertices
     # For Kirkpatrick's algorithm, the bounding triangle should not be in the independent set
     # We should NEVER be able to remove the vertices of the bounding triangle
+    # The bounding triangle vertices are: leftmost, rightmost, and topmost
     if len(G.vertices) > 3:
-        marked_verteces.add(G.vertices[-1])
-        marked_verteces.add(G.vertices[-2])
-        marked_verteces.add(G.vertices[-3])
-        print(f"Vertices of G: {G.vertices}")
+        import primitives as prim
+
+        # Find the leftmost, rightmost, and topmost vertices
+        leftmost = min(G.vertices, key=lambda v: v.point[prim.X])
+        rightmost = max(G.vertices, key=lambda v: v.point[prim.X])
+        topmost = max(G.vertices, key=lambda v: (v.point[prim.Y], v.point[prim.X]))
+
+        # Mark these as part of the bounding triangle
+        marked_verteces.add(leftmost)
+        marked_verteces.add(rightmost)
+        marked_verteces.add(topmost)
 
     for vertex in G.vertices:
         if vertex.degree >= 9:
@@ -219,31 +234,19 @@ def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
 
     while len(marked_verteces) != len(G.vertices):
         # Make a copy of the vertices list to avoid modification during iteration
-        vertices_copy = list(G.vertices)
-        found_vertex = False
-        for vertex in vertices_copy:
+        for vertex in G.vertices:
             if vertex not in marked_verteces:
-                found_vertex = True
                 marked_verteces.add(vertex)
                 for edge in vertex.get_incident_edges():
-                    print(vertex.get_incident_edges)
-                    # Get the other endpoint of the edge
-                    # Compare by ID to handle potential type mismatches
+                    # We want the endpoint that is not the added vertex
                     if hasattr(edge.origin, 'id') and hasattr(vertex, 'id'):
                         if edge.origin.id == vertex.id:
                             neighbor = edge.destination
+                            marked_verteces.add(neighbor)
                         else:
                             neighbor = edge.origin
-                    else:
-                        neighbor = edge.destination if edge.origin == vertex else edge.origin
-                    print(f"vertex: {vertex} edge.origin: {edge.origin} edge.dest: {edge.destination} neighbor: {neighbor}")
-                    marked_verteces.add(neighbor)
+                            marked_verteces.add(neighbor)
                 I.add(vertex)
-                break  # Only add one vertex per iteration
-
-        # Safety check: if no unmarked vertex was found, break to avoid infinite loop
-        if not found_vertex:
-            break
 
     return I
 
@@ -253,13 +256,14 @@ def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list[pg.PlanarGraph]:
 
     hierarchy.append(P_i)
 
-    while len(P_i.vertices) > 4:
+    while len(P_i.vertices) > 3:
         I = ConstructIndependentSet(P_i)
+
         P_iplusone = P_i.clone()
 
         # Remove all vertices in the independent set
         for vertex in I:
-            # Find the vertex in the cloned graph by ID
+            # Find the vertex in the cloned graph by ID (clone now preserves IDs)
             vertex_to_remove = None
             for v in P_iplusone.vertices:
                 if v.id == vertex.id:
