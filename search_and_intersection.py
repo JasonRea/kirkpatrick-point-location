@@ -54,7 +54,12 @@ def SegSegInt(a: prim.Point, b: prim.Point, c: prim.Point, d: prim.Point, p: pri
     return code
 
 
+'''
+We define that two triangles intersect if at least one of the following is observed:
 
+    1. A vertex of one triangle lies inside the face of the other
+    2. One or more edges of the triangles properly intersect
+'''
 def TriTriInt(t1: poly.Polygon, t2: poly.Polygon):
     try:
         for point in t2.points:
@@ -253,11 +258,13 @@ def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
 def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list[pg.PlanarGraph]:
     hierarchy = []
     P_i = P.clone()
+    print(f"Edges: {P_i.edges}")
 
     hierarchy.append(P_i)
 
     while len(P_i.vertices) > 3:
         I = ConstructIndependentSet(P_i)
+        print(f"Independent Set {I}")
 
         P_iplusone = P_i.clone()
 
@@ -296,5 +303,7 @@ def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list[pg.PlanarGraph]:
 
         hierarchy.append(P_iplusone)
         P_i = P_iplusone
+        print(f"Edges: {P_i.edges}")
+
 
     return hierarchy
