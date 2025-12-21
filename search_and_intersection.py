@@ -258,13 +258,11 @@ def ConstructIndependentSet(G: pg.PlanarGraph) -> set[pg.GraphVertex]:
 def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list[pg.PlanarGraph]:
     hierarchy = []
     P_i = P.clone()
-    print(f"Edges: {P_i.edges}")
 
     hierarchy.append(P_i)
 
     while len(P_i.vertices) > 3:
         I = ConstructIndependentSet(P_i)
-        print(f"Independent Set {I}")
 
         P_iplusone = P_i.clone()
 
@@ -303,7 +301,5 @@ def ConstructNestedPolytopeHierarchy(P: pg.PlanarGraph) -> list[pg.PlanarGraph]:
 
         hierarchy.append(P_iplusone)
         P_i = P_iplusone
-        print(f"Edges: {P_i.edges}")
-
 
     return hierarchy
