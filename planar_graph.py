@@ -492,7 +492,7 @@ class PlanarGraph:
             if len(vertices) == 3:
                 # Already a triangle
                 v_ids = [self._vertex_map[v].id if v in self._vertex_map else v.id for v in vertices]
-                triangles.append(tuple(v_ids))
+                triangles.append(tuple(sorted(v_ids)))
                 continue
 
             # Ear clipping for polygons with 4+ vertices
@@ -576,7 +576,7 @@ class PlanarGraph:
                     else:
                         v2_id = id(v2)
 
-                    triangles.append((v0_id, v1_id, v2_id))
+                    triangles.append(tuple(sorted([v0_id, v1_id, v2_id])))
 
                     # Add diagonal edge from v0 to v2 (skipping the ear vertex v1)
                     # This edge subdivides the face
@@ -613,7 +613,7 @@ class PlanarGraph:
                     v_ids.append(v.id)
                 else:
                     v_ids.append(id(v))
-            triangles.append(tuple(v_ids))
+            triangles.append(tuple(sorted(v_ids)))
 
         return triangles, diagonals_to_add
 
