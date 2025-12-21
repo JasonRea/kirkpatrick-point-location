@@ -3,20 +3,45 @@ import polygon as poly
 from search_and_intersection import *
 
 class DAGNode():
-    def __init__(self, value: tuple[int, int, int]):
-        self.value = value
-        self.children = []
+    """
+    A node in the DAG representing a triangle in the hierarchical triangulation.
 
-    def add_child(self, child):
-        self.children.append(child)
+    The DAG is built bottom-up:
+    - Level 0 (bottom): Original triangulation with all vertices
+    - Level k (top): Final bounding triangle only
 
-    def polygonalize(self, P: pg.PlanarGraph):
+    Each node points to children in the level below that it overlaps with.
+    """
+    def __init__(self, triangle: tuple[int, int, int], level: int):
+        self.triangle = triangle  # Tuple of 3 vertex IDs (sorted)
+        self.level = level        # Which level in the hierarchy (0 = bottom)
+        self.children = []        # Nodes in the level below that overlap with this triangle
+
+    def add_child(self, child: 'DAGNode'):
+        """Add a child node (from the level below) that overlaps with this triangle"""
+        if child not in self.children:
+            self.children.append(child)
+
+    def to_polygon(self, P: pg.PlanarGraph) -> poly.Polygon:
+        """Convert this triangle to a Polygon object using coordinates from graph P"""
         points = []
-
-        for vertex in self.value:
-            points.append(P.get_coords_by_vertex_id(vertex))
-
+        for vertex_id in self.triangle:
+            coords = P.get_coords_by_vertex_id(vertex_id)
+            if coords is None:
+                raise ValueError(f"Vertex ID {vertex_id} not found in graph")
+            points.append(prim.Point(coords[0], coords[1]))
         return poly.Polygon(points)
+
+    def __repr__(self):
+        return f"DAGNode(tri={self.triangle}, level={self.level}, children={len(self.children)})"
+
+    def __hash__(self):
+        return hash(self.triangle)
+
+    def __eq__(self, other):
+        if not isinstance(other, DAGNode):
+            return False
+        return self.triangle == other.triangle
 
 def BoundTriangle(P: pg.PlanarGraph):
     """
@@ -85,35 +110,86 @@ def BoundTriangle(P: pg.PlanarGraph):
 
     P.rebuild_dcel()
 
-def BuildDAG(P: pg.PlanarGraph):
-            
+def BuildDAG(P: pg.PlanarGraph) -> DAGNode:
+    """
+    Build a Directed Acyclic Graph (DAG) for point location queries.
+
+    The DAG is constructed bottom-up from a hierarchy of triangulations.
+    Each node at level i points to overlapping nodes at level i-1.
+    """
+    # Add bounding triangle and triangulate
     BoundTriangle(P)
     P.triangulate()
 
+    # Build hierarchy of nested triangulations
     hierarchy = ConstructNestedPolytopeHierarchy(P)
 
-    previous_layer: list[DAGNode] = []
-    current_layer: list[DAGNode] = []
+    if not hierarchy:
+        raise ValueError("Empty hierarchy - cannot build DAG")
 
-    for pslg in hierarchy:
+    # Build DAG bottom-up, level by level
+    # Each unique triangle should only appear at ONE level (the first level it appears in)
+    seen_triangles: set[tuple[int, int, int]] = set()
+
+    # Track nodes at each level for linking purposes
+    levels: list[list[DAGNode]] = []
+
+    # Process each level in the hierarchy
+    for level_idx, pslg in enumerate(hierarchy):
         triangles = pslg.triangulate()
-        current_layer.clear()
-        
+        level_nodes = []
+
         for triangle in triangles:
-            #initialize new nodes in current level of hierarchy
-            new_node = DAGNode(triangle)
-            current_layer.append(new_node)
+            triangle_normalized = tuple(sorted(triangle))
 
-            #link nodes
-            for node in previous_layer:
+            if triangle_normalized not in seen_triangles:
+                node = DAGNode(triangle_normalized, level_idx)
+                level_nodes.append(node)
+                seen_triangles.add(triangle_normalized)
 
-                #turn these tuples into polygons
-                tri_one = node.polygonalize(hierarchy[0]) # use P_0 for coordinate lookup
-                tri_two = new_node.polygonalize(hierarchy[0])
+        # Link current level nodes to previous level nodes
+        if level_idx > 0:
+            previous_level = levels[level_idx - 1]
+            previous_pslg = hierarchy[level_idx - 1]
+            current_pslg = pslg
 
-                if TriTriInt(tri_one, tri_two):
-                    new_node.add_child(node)
+            for current_node in level_nodes:
+                try:
+                    current_polygon = current_node.to_polygon(current_pslg)
+                except ValueError:
+                    continue
 
-        previous_layer = current_layer.copy()
+                # Check which nodes from the previous level overlap
+                for prev_node in previous_level:
+                    try:
+                        # Use previous level's PSLG for previous node
+                        prev_polygon = prev_node.to_polygon(previous_pslg)
+                    except ValueError:
+                        continue
 
-    return previous_layer[-1] # return head of DAG
+                    # Link if triangles intersect
+                    if TriTriInt(current_polygon, prev_polygon):
+                        current_node.add_child(prev_node)
+
+        levels.append(level_nodes)
+
+    # Return the root
+    if not levels:
+        raise ValueError("No levels created - DAG construction failed")
+
+    top_level = levels[-1]
+    if len(top_level) != 1:
+        print(f"Warning: Expected 1 node at top level, found {len(top_level)}")
+
+    root = top_level[0] if top_level else None
+
+    # Store metadata on the root for debugging/analysis
+    if root:
+        root.all_levels = levels
+        # Collect all unique nodes from all levels
+        all_nodes_list = []
+        for level in levels:
+            all_nodes_list.extend(level)
+        root.all_nodes = all_nodes_list
+
+    return root
